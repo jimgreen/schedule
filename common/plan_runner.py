@@ -22,11 +22,12 @@ class PlanRunner:
         self.horizon = horizon
         self.solver_name = solver_name
         self.solver = solver
+        self.solver_settings = SolverSettings(name=solver_name)
 
     def run(self, baseline: dict[str, list[float]] | None = None) -> PlanResult:
         model = build_dispatch_model(self.case, self.horizon, baseline=baseline)
         if self.solver is None:
-            report = SolverFactory.solve(model, SolverSettings(name=self.solver_name))
+            report = SolverFactory.solve(model, self.solver_settings)
         else:
             report = self.solver.solve(model)
         dispatch = self._extract_dispatch(model)

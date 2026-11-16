@@ -22,3 +22,14 @@ def test_unknown_solver_returns_milp_error():
     response = client.post("/api/hourly-plan/solve", json={"solver": "missing-solver"})
     assert response.status_code == 422
     assert "MILP" in response.json()["detail"]
+
+
+def test_overview_is_database_backed_and_control_can_use_latest_plan():
+    overview = client.get("/api/overview")
+    assert overview.status_code == 200
+    body = overview.json()
+    assert "plans" in body and "control" in body
+    response = client.post("/api/control/pause")
+    assert response.status_code == 200
+    assert response.json()["auto_hourly_enabled"] is False
+    assert client.post("/api/control/resume").json()["auto_hourly_enabled"] is True
