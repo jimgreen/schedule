@@ -5,6 +5,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-data/schedule_state.json
+data/schedule.db
+data/schedule.db-shm
+data/schedule.db-wal
 *.log
 .superpowers/brainstorm/
