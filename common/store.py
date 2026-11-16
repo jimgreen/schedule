@@ -98,7 +98,10 @@ class ScheduleStore:
     """SQLite repository shared by the optimizer and the web API."""
 
     def __init__(self, db_path: str | Path | None = None):
-        default_path = Path(__file__).resolve().parents[1] / "data" / "schedule.db"
+        # Runtime SQLite is kept with the realtime database service rather than
+        # inside the source checkout. SCHEDULE_DB_PATH remains an override for
+        # tests and deployments that use another database directory.
+        default_path = Path(r"D:\codex\sqldb\realtime\schedule") / "schedule.db"
         self.db_path = Path(db_path or os.getenv("SCHEDULE_DB_PATH", default_path))
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()

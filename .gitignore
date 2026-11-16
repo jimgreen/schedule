@@ -8,5 +8,7 @@ __pycache__/
 data/schedule.db
 data/schedule.db-shm
 data/schedule.db-wal
+data/uvicorn.out.log
+data/uvicorn.err.log
 *.log
 .superpowers/brainstorm/
