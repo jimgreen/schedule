@@ -1,0 +1,15 @@
+from pathlib import Path
+
+
+def test_web_ui_has_required_tabs_and_no_scroll_rules():
+    html = Path("web/index.html").read_text(encoding="utf-8")
+    css = Path("web/styles.css").read_text(encoding="utf-8")
+    for label in ["运行总览", "周前计划", "日前计划", "小时滚动", "柴油机与油耗曲线", "求解器与参数", "控制与审计"]:
+        assert label in html
+    assert "overflow:hidden" in css.replace(" ", "")
+
+
+def test_ui_exposes_fuel_statistics():
+    html = Path("web/index.html").read_text(encoding="utf-8")
+    assert "油耗曲线" in html
+    assert "柴油消耗量统计" in html

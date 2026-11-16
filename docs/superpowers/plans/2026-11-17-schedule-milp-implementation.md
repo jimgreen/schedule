@@ -265,10 +265,11 @@ git add common/plan_runner.py weekly_plan daily_plan hourly_plan tests/test_plan
 git commit -m "feat: add three scheduling horizons"
 ```
 
-### Task 6: Add persistence, FastAPI routes, and control actions
+### Task 6: Add SQLite persistence, FastAPI routes, and control actions
 
 **Files:**
 - Create: `common/store.py`
+- Create: `data/.gitkeep`
 - Create: `api/main.py`
 - Create: `api/routes.py`
 - Create: `tests/test_api.py`
@@ -306,9 +307,9 @@ def test_hourly_run_requires_milp_solver():
 Run: `python -m pytest tests/test_api.py -q`
 Expected: FAIL because the FastAPI app and store are missing.
 
-- [ ] **Step 3: Implement JSON persistence and routes**
+- [ ] **Step 3: Implement SQLite persistence and routes**
 
-Store case data, plan versions, solver reports, diesel summaries, and control events in `data/schedule_state.json` behind a lock. Implement `GET /api/health`, `GET/PUT /api/case`, `GET /api/solver`, `POST /api/{weekly,daily,hourly}-plan/solve`, `GET /api/plans/{kind}`, `POST /api/control/{validate,publish,pause,resume,execute,rollback}`, and `GET /api/audit`. Validate solver names and request fields with Pydantic. Return HTTP 422 for unavailable or non-MILP solvers, HTTP 409 for invalid control state, and include plan version, status, objective, MIP gap, elapsed seconds, fuel summary, and interval results in successful responses. Serve `web/index.html` at `/` and static files under `/static`.
+Create `data/schedule.db` with SQLite tables `diesel_generators`, `fuel_curve_points`, `renewables`, `batteries`, `flexible_loads`, `grid_connections`, `forecasts`, `plans`, `control_state`, and `audit_events`. `common/store.py` must initialize the schema, upsert the complete `CaseData`, load it for calculation, persist every `PlanResult` including diesel summaries, and record control events. Use parameterized SQL and a process lock around writes. Implement `GET /api/health`, `GET/PUT /api/case`, `GET /api/solver`, `POST /api/{weekly,daily,hourly}-plan/solve`, `GET /api/plans/{kind}`, `POST /api/control/{validate,publish,pause,resume,execute,rollback}`, and `GET /api/audit`. Validate solver names and request fields with Pydantic. Return HTTP 422 for unavailable or non-MILP solvers, HTTP 409 for invalid control state, and include plan version, status, objective, MIP gap, elapsed seconds, fuel summary, and interval results in successful responses. Serve `web/index.html` at `/` and static files under `/static`.
 
 - [ ] **Step 4: Run API tests**
 
