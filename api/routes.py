@@ -49,6 +49,20 @@ def solver_catalog() -> dict:
     return {name: info.__dict__ for name, info in SolverFactory.catalog().items()}
 
 
+@router.get("/overview")
+def overview() -> dict:
+    """Return the dashboard data assembled from SQLite, not browser state."""
+    plans = {kind: store.list_plans(kind, limit=1)[0] for kind in ("weekly", "daily", "hourly") if store.list_plans(kind, limit=1)}
+    control_state = store.control_state()
+    latest = max(plans.values(), key=lambda plan: plan.created_at) if plans else None
+    return {
+        "latest_plan": None if latest is None else latest.model_dump(mode="json"),
+        "plans": {kind: plan.model_dump(mode="json") for kind, plan in plans.items()},
+        "control": control_state.model_dump(mode="json"),
+        "audit_count": len(store.list_events(500)),
+    }
+
+
 def _run_plan(kind: str, request: PlanRequest):
     case = ensure_case()
     planner_type = {"weekly": WeeklyPlanner, "daily": DailyPlanner, "hourly": HourlyPlanner}.get(kind)
@@ -56,6 +70,14 @@ def _run_plan(kind: str, request: PlanRequest):
         raise HTTPException(status_code=404, detail=f"unknown plan kind: {kind}")
     try:
         planner = planner_type(case, solver_name=request.solver)
+        if request.time_limit_seconds is not None or request.mip_gap is not None:
+            from common.schemas import SolverSettings
+
+            planner.solver_settings = SolverSettings(
+                name=request.solver,
+                time_limit_seconds=request.time_limit_seconds or 30.0,
+                mip_gap=request.mip_gap if request.mip_gap is not None else 0.01,
+            )
         result = planner.run()
     except SolverUnavailable as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -100,6 +122,9 @@ def control(action: str, plan_id: str | None = None):
     if action not in {"validate", "publish", "pause", "resume", "execute", "rollback"}:
         raise HTTPException(status_code=404, detail="unknown control action")
     state = store.control_state()
+    if action in {"validate", "publish", "execute", "rollback"} and not plan_id:
+        latest = store.list_plans(limit=1)
+        plan_id = latest[0].plan_id if latest else None
     if action in {"validate", "publish", "execute", "rollback"} and plan_id:
         plan = store.get_plan(plan_id)
         if plan is None:
