@@ -193,14 +193,15 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
         model.baseline_lower = Constraint(model.G, model.T, rule=lambda m, g, t: m.baseline_deviation[g, t] >= baseline.get(g, [0.0] * horizon.steps)[t] - m.power[g, t])
 
     def objective_rule(m: ConcreteModel) -> Any:
-        fuel_cost = sum(m.fuel_lph[g, t] * generators[g].fuel_price_per_liter * horizon.step_hours for g in m.G for t in m.T)
-        startup_cost = sum(generators[g].startup_cost * m.startup[g, t] + generators[g].shutdown_cost * m.shutdown[g, t] for g in m.G for t in m.T)
+        params = case.optimization
+        fuel_cost = sum(params.fuel_cost_multiplier * m.fuel_lph[g, t] * generators[g].fuel_price_per_liter * horizon.step_hours for g in m.G for t in m.T)
+        startup_cost = sum(params.startup_cost_multiplier * (generators[g].startup_cost * m.startup[g, t] + generators[g].shutdown_cost * m.shutdown[g, t]) for g in m.G for t in m.T)
         grid_cost = sum(case.grid.import_price_per_kwh * m.grid_import[t] * horizon.step_hours - case.grid.export_price_per_kwh * m.grid_export[t] * horizon.step_hours for t in m.T)
-        storage_cost = sum(batteries[b].degradation_cost_per_kwh * (m.charge[b, t] + m.discharge[b, t]) * horizon.step_hours for b in m.B for t in m.T)
-        curtail_cost = sum(0.08 * m.renewable_curtailment[r, t] * horizon.step_hours for r in m.R for t in m.T)
-        reserve_cost = sum(0.01 * m.reserve[t] * horizon.step_hours for t in m.T)
-        lost_cost = sum(10000.0 * m.lost_load[t] * horizon.step_hours for t in m.T)
-        deviation_cost = 0 if baseline_deviation is None else sum(0.2 * m.baseline_deviation[g, t] for g in m.G for t in m.T)
+        storage_cost = sum(params.storage_degradation_multiplier * batteries[b].degradation_cost_per_kwh * (m.charge[b, t] + m.discharge[b, t]) * horizon.step_hours for b in m.B for t in m.T)
+        curtail_cost = sum(params.curtailment_penalty * m.renewable_curtailment[r, t] * horizon.step_hours for r in m.R for t in m.T)
+        reserve_cost = sum(params.reserve_penalty * m.reserve[t] * horizon.step_hours for t in m.T)
+        lost_cost = sum(params.lost_load_penalty * m.lost_load[t] * horizon.step_hours for t in m.T)
+        deviation_cost = 0 if baseline_deviation is None else sum(params.baseline_deviation_penalty * m.baseline_deviation[g, t] for g in m.G for t in m.T)
         return fuel_cost + startup_cost + grid_cost + storage_cost + curtail_cost + reserve_cost + lost_cost + deviation_cost
 
     model.objective = Objective(rule=objective_rule, sense=minimize)

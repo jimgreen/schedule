@@ -33,3 +33,11 @@ def test_overview_is_database_backed_and_control_can_use_latest_plan():
     assert response.status_code == 200
     assert response.json()["auto_hourly_enabled"] is False
     assert client.post("/api/control/resume").json()["auto_hourly_enabled"] is True
+
+
+def test_optimization_and_network_model_are_editable():
+    params = client.put("/api/optimization-params", json={"lost_load_penalty": 12345}).json()
+    assert params["lost_load_penalty"] == 12345
+    model = client.put("/api/network-model", json={"name": "接口模型", "base_mva": 10, "buses": [{"id": "B1"}], "lines": [], "parameters": {"frequency_hz": 50}}).json()
+    assert model["name"] == "接口模型"
+    assert client.get("/api/network-model").json()["base_mva"] == 10

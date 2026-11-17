@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from common.sample_data import default_case
-from common.schemas import CaseData, ControlEvent, ControlState, PlanRequest
+from common.schemas import CaseData, ControlEvent, ControlState, NetworkModel, OptimizationParameters, PlanRequest
 from common.solvers import SolverFactory, SolverUnavailable
 from common.store import ScheduleStore
 from daily_plan.planner import DailyPlanner
@@ -42,6 +42,36 @@ def put_case(case: CaseData) -> dict:
     store.save_case(case)
     store.add_event(ControlEvent(action="case_updated", detail="资产、油耗曲线或预测已更新", created_at=datetime.now(timezone.utc).isoformat()))
     return case.model_dump(mode="json")
+
+
+@router.get("/optimization-params")
+def get_optimization_params() -> dict:
+    return store.load_optimization().model_dump(mode="json")
+
+
+@router.put("/optimization-params")
+def put_optimization_params(parameters: OptimizationParameters) -> dict:
+    store.save_optimization(parameters)
+    case = ensure_case()
+    case.optimization = parameters
+    store.save_case(case)
+    _event("optimization_updated", detail="优化参数已更新")
+    return parameters.model_dump(mode="json")
+
+
+@router.get("/network-model")
+def get_network_model() -> dict:
+    return store.load_network_model().model_dump(mode="json")
+
+
+@router.put("/network-model")
+def put_network_model(model: NetworkModel) -> dict:
+    store.save_network_model(model)
+    case = ensure_case()
+    case.network_model = model
+    store.save_case(case)
+    _event("network_model_updated", detail=f"电网模型已加载：{model.name}")
+    return model.model_dump(mode="json")
 
 
 @router.get("/solver")

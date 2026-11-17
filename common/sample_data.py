@@ -10,6 +10,8 @@ from .schemas import (
     Forecast,
     FuelCurvePoint,
     GridConnection,
+    NetworkModel,
+    OptimizationParameters,
     Renewable,
 )
 
@@ -59,4 +61,10 @@ def default_case() -> CaseData:
             reserve_fraction=0.1,
         ),
         fuel_price_per_liter=7.5,
+        optimization=OptimizationParameters(),
+        network_model=NetworkModel(
+            name="默认园区电网模型", base_mva=1.0,
+            buses=[{"id": "B1", "name": "园区母线", "voltage_kv": 10.0}],
+            lines=[], parameters={"frequency_hz": 50, "operating_mode": "island_or_grid"},
+        ),
     )
