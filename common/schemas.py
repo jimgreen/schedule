@@ -93,6 +93,26 @@ class GridConnection(BaseModel):
     export_price_per_kwh: float = Field(default=0.05, ge=0)
 
 
+class NetworkModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = "默认园区电网模型"
+    base_mva: float = Field(default=1.0, gt=0)
+    buses: list[dict[str, Any]] = Field(default_factory=list)
+    lines: list[dict[str, Any]] = Field(default_factory=list)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class OptimizationParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    fuel_cost_multiplier: float = Field(default=1.0, ge=0)
+    startup_cost_multiplier: float = Field(default=1.0, ge=0)
+    curtailment_penalty: float = Field(default=0.08, ge=0)
+    reserve_penalty: float = Field(default=0.01, ge=0)
+    lost_load_penalty: float = Field(default=10000.0, ge=0)
+    baseline_deviation_penalty: float = Field(default=0.2, ge=0)
+    storage_degradation_multiplier: float = Field(default=1.0, ge=0)
+
+
 class HorizonName(str, Enum):
     weekly = "weekly"
     daily = "daily"
@@ -148,6 +168,8 @@ class CaseData(BaseModel):
     grid: GridConnection
     forecast: Forecast
     fuel_price_per_liter: float = Field(default=1.0, ge=0)
+    optimization: OptimizationParameters = Field(default_factory=OptimizationParameters)
+    network_model: NetworkModel = Field(default_factory=NetworkModel)
 
     @property
     def horizons(self) -> dict[str, Horizon]:

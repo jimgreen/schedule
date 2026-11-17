@@ -16,6 +16,8 @@ from .schemas import (
     Forecast,
     FuelCurvePoint,
     GridConnection,
+    NetworkModel,
+    OptimizationParameters,
     PlanResult,
     Renewable,
 )
@@ -55,6 +57,16 @@ CREATE TABLE IF NOT EXISTS grid_connections (
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS forecasts (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS optimization_parameters (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS network_models (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     payload TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -136,6 +148,8 @@ class ScheduleStore:
                 connection.executemany(f"INSERT INTO {table}(id,payload,updated_at) VALUES(?,?,?)", [(item.id, item.model_dump_json(), timestamp) for item in values])
             connection.execute("INSERT OR REPLACE INTO grid_connections(id,payload,updated_at) VALUES(1,?,?)", (case.grid.model_dump_json(), timestamp))
             connection.execute("INSERT OR REPLACE INTO forecasts(id,payload,updated_at) VALUES(1,?,?)", (case.forecast.model_dump_json(), timestamp))
+            connection.execute("INSERT OR REPLACE INTO optimization_parameters(id,payload,updated_at) VALUES(1,?,?)", (case.optimization.model_dump_json(), timestamp))
+            connection.execute("INSERT OR REPLACE INTO network_models(id,payload,updated_at) VALUES(1,?,?)", (case.network_model.model_dump_json(), timestamp))
             connection.commit()
 
     def load_case(self) -> CaseData | None:
@@ -143,6 +157,8 @@ class ScheduleStore:
             generator_rows = connection.execute("SELECT payload FROM diesel_generators ORDER BY id").fetchall()
             grid_row = connection.execute("SELECT payload FROM grid_connections WHERE id=1").fetchone()
             forecast_row = connection.execute("SELECT payload FROM forecasts WHERE id=1").fetchone()
+            optimization_row = connection.execute("SELECT payload FROM optimization_parameters WHERE id=1").fetchone()
+            network_row = connection.execute("SELECT payload FROM network_models WHERE id=1").fetchone()
             if not generator_rows or grid_row is None or forecast_row is None:
                 return None
             generators = [DieselGenerator.model_validate_json(row["payload"]) for row in generator_rows]
@@ -161,7 +177,29 @@ class ScheduleStore:
                 flexible_loads=flexible_loads,
                 grid=GridConnection.model_validate_json(grid_row["payload"]),
                 forecast=Forecast.model_validate_json(forecast_row["payload"]),
+                optimization=OptimizationParameters.model_validate_json(optimization_row["payload"]) if optimization_row else OptimizationParameters(),
+                network_model=NetworkModel.model_validate_json(network_row["payload"]) if network_row else NetworkModel(),
             )
+
+    def save_optimization(self, parameters: OptimizationParameters) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute("INSERT OR REPLACE INTO optimization_parameters(id,payload,updated_at) VALUES(1,?,?)", (parameters.model_dump_json(), _now()))
+            connection.commit()
+
+    def load_optimization(self) -> OptimizationParameters:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload FROM optimization_parameters WHERE id=1").fetchone()
+            return OptimizationParameters.model_validate_json(row["payload"]) if row else OptimizationParameters()
+
+    def save_network_model(self, model: NetworkModel) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute("INSERT OR REPLACE INTO network_models(id,payload,updated_at) VALUES(1,?,?)", (model.model_dump_json(), _now()))
+            connection.commit()
+
+    def load_network_model(self) -> NetworkModel:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload FROM network_models WHERE id=1").fetchone()
+            return NetworkModel.model_validate_json(row["payload"]) if row else NetworkModel()
 
     def save_plan(self, plan: PlanResult) -> None:
         report = plan.solver_report
