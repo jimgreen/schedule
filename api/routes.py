@@ -311,7 +311,11 @@ def compare_plans(kind: str, left_id: str, right_id: str):
     left_data, right_data = compact(left), compact(right)
     numeric_keys = ("objective", "total_liters", "elapsed_seconds")
     delta = {key: None if left_data[key] is None or right_data[key] is None else round(right_data[key] - left_data[key], 6) for key in numeric_keys}
-    return {"left": left_data, "right": right_data, "delta_right_minus_left": delta}
+    if left.status not in {'solved','feasible'} or right.status not in {'solved','feasible'}:
+        raise HTTPException(status_code=409, detail="无可用解的版本不能参与数值比较")
+    left_start = left.input_snapshot.config_for(kind).start_time if left.input_snapshot else None
+    right_start = right.input_snapshot.config_for(kind).start_time if right.input_snapshot else None
+    return {"left": left_data, "right": right_data, "delta_right_minus_left": delta, "same_start_time": left_start == right_start}
 
 
 @router.get("/plan-summaries")

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Schedule · 三层优化调度</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261118-4">
+  <link rel="stylesheet" href="/static/styles.css?v=20261118-5">
 </head>
 <body><div id="app">
   <header><div><small>SCHEDULE / MILP</small><h1>电力优化调度平台</h1></div><span id="connection" role="status">连接中…</span></header>
@@ -15,24 +15,28 @@
     <section id="module-view" class="view">
       <div class="heading"><div><h2 id="module-title">周前计划</h2><small id="horizon-label">168 × 60 分钟 · 7 天</small></div><span id="dirty" class="badge">已保存</span><button id="solve">计算本模块 MILP</button></div>
       <nav id="functions" aria-label="模块功能"><button data-function="optimization" class="active">优化参数</button><button data-function="inputs">输入曲线</button><button data-function="results">输出结果</button><button data-function="control">控制审计</button></nav>
-      <div class="toolbar"><span id="scope-label"></span><button id="save-module">保存本模块参数与曲线</button><button id="export-module">导出配置</button><label class="file-button">导入配置<input id="import-module" type="file" accept=".json,application/json"></label></div>
+      <div id="module-tools" class="toolbar"><span id="scope-label"></span><button id="save-module" title="Ctrl+S 保存当前模块">保存本模块参数与曲线</button><button id="export-module">导出配置</button><label class="file-button">导入配置<input id="import-module" type="file" accept=".json,application/json"></label></div>
       <div id="optimization" class="feature panel">
         <div class="solver-bar"><label>求解器<select id="solver-select"></select></label><label>时限(s)<input id="time-limit" type="number" min="1" max="3600" step="1"></label><label>MIP Gap<input id="mip-gap" type="number" min="0" max="0.99" step="0.001"></label></div>
         <div id="solver-info" class="notice"></div><div id="optimization-form" class="form-grid"></div>
         <div class="pager"><button data-page="opt:-1">上一页</button><span id="opt-page"></span><button data-page="opt:1">下一页</button></div>
       </div>
       <div id="inputs" class="feature panel" hidden>
-        <div class="toolbar"><label>曲线<select id="curve-kind"><option value="demand_kw">负荷 (kW)</option><option value="wind_kw">风电 (kW)</option><option value="pv_kw">光伏 (kW)</option></select></label><label>备用比例<input id="reserve-fraction" type="number" min="0" max="1" step="0.01"></label><label>起点 (本地时间；可留空)<input id="start-time" type="datetime-local"></label><label>批量比例<input id="curve-scale" type="number" value="1" step="0.01"></label><label>批量偏移<input id="curve-offset" type="number" value="0" step="1"></label><button data-curve-action="apply">应用批量调整</button><button data-curve-action="smooth">平滑曲线</button><button data-curve-action="undo" disabled>撤销</button></div>
-        <div id="input-chart" class="chart"></div><div id="input-curve-form" class="form-grid"></div><div class="pager"><button data-page="curve:-1">上一页</button><span id="curve-page"></span><button data-page="curve:1">下一页</button></div>
+        <div class="toolbar"><label>曲线<select id="curve-kind"><option value="demand_kw">负荷 (kW)</option><option value="wind_kw">风电 (kW)</option><option value="pv_kw">光伏 (kW)</option></select></label><label>功能<select id="input-mode"><option value="edit">逐点编辑</option><option value="batch">批量调整</option><option value="settings">时间与备用</option></select></label></div>
+        <div id="input-edit" class="subview"><div id="input-chart" class="chart"></div><div id="input-curve-form" class="form-grid"></div><div class="pager"><label>跳至时段<input id="curve-jump" type="number" min="1" value="1"></label><button data-page="curve:-1">上一页</button><span id="curve-page"></span><button data-page="curve:1">下一页</button></div></div>
+        <div id="input-batch" class="subview" hidden><div class="form-grid"><label>起始时段<input id="curve-from" type="number" min="1" value="1"></label><label>结束时段<input id="curve-to" type="number" min="1"></label><label>批量比例<input id="curve-scale" type="number" min="0" value="1" step="0.01"></label><label>批量偏移 (kW)<input id="curve-offset" type="number" value="0" step="1"></label></div><p class="notice">新值 = 原值 × 比例 + 偏移。设比例为 0 可填充固定值；负值会被拒绝。仅修改当前模块、当前曲线的草稿，保存后才参与计算。</p><div class="toolbar"><button data-curve-action="apply">应用批量调整</button><button data-curve-action="undo" disabled>撤销批量调整</button></div><div id="batch-status" class="notice" role="status"></div></div>
+        <div id="input-settings" class="subview" hidden><div class="form-grid"><label>备用比例<input id="reserve-fraction" type="number" min="0" max="1" step="0.01"></label><label>起点 (本地时间；可留空)<input id="start-time" type="datetime-local"></label></div></div>
       </div>
       <div id="results" class="feature panel" hidden>
         <div class="toolbar"><label>本模块版本<select id="plan-select"></select></label><button id="reload-results">刷新结果</button><button id="compare-result">比较当前/上一版</button><button id="export-result">导出 JSON</button><button id="export-csv">导出 CSV</button></div>
         <div class="pager"><button data-page="history:-1">较新版本</button><span id="history-page"></span><button data-page="history:1">较旧版本</button></div>
-        <div id="result-summary" class="metrics"></div><div id="result-extra" class="notice"></div>
-        <nav id="result-tabs"><button data-result="chart" class="active">曲线 / 柴油消耗量统计</button><button data-result="dispatch">出力明细</button><button data-result="statistics">能量与成本</button></nav>
-        <div id="chart-result"><label>展示<select id="result-curve"><option value="fuel">柴油消耗曲线 (L/时段)</option><option value="cumulative">累计柴油消耗 (L)</option><option value="power">负荷与柴油出力 (kW)</option></select></label><div id="result-chart" class="chart"></div><div id="generator-fuel" class="notice"></div></div>
+        <div id="result-summary" class="metrics"></div>
+        <nav id="result-tabs"><button data-result="chart" class="active">曲线（柴油消耗量统计）</button><button data-result="dispatch">明细</button><button data-result="statistics">统计</button><button data-result="comparison">对比</button></nav>
+        <div id="result-extra" class="notice"></div><label id="resource-label">对象<select id="result-resource"></select></label>
+        <div id="chart-result"><label>展示<select id="result-curve"></select></label><div id="result-chart" class="chart"></div><div id="generator-fuel" class="notice"></div></div>
         <div id="dispatch-result" hidden><div id="dispatch-table"></div><div class="pager"><button data-page="dispatch:-1">上一页</button><span id="dispatch-page"></span><button data-page="dispatch:1">下一页</button></div></div>
-        <div id="statistics-result" hidden><div id="statistics-table"></div><div class="pager"><button data-page="stats:-1">上一页</button><span id="stats-page"></span><button data-page="stats:1">下一页</button></div></div>
+        <div id="statistics-result" class="subview" hidden><label>能量与成本 / 性能<select id="statistics-group"><option value="energy">能量统计</option><option value="cost">目标函数成本</option><option value="performance">计算性能</option></select></label><div id="statistics-table"></div><div class="pager"><button data-page="stats:-1">上一页</button><span id="stats-page"></span><button data-page="stats:1">下一页</button></div></div>
+        <div id="comparison-result" class="subview" hidden><p id="compare-note" class="notice"></p><div id="compare-table"></div></div>
       </div>
       <div id="control" class="feature panel" hidden>
         <div id="control-summary" class="notice"></div>
@@ -54,4 +58,4 @@
     </section>
   </main>
   <footer><span id="db-path">SQLite</span><span id="toast" role="status">正在加载…</span></footer>
-</div><script src="/static/app.js?v=20261118-4" defer></script></body></html>
+</div><script src="/static/result-data.js?v=20261118-5" defer></script><script src="/static/app.js?v=20261118-5" defer></script></body></html>
