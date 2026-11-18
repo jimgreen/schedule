@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,"><title>共享设备参数 · Schedule</title><link rel="stylesheet" href="/static/styles.css?v=20261118-pages"></head>
+<body data-kind="" data-feature="devices"><div id="app">
+<header><div><small>SCHEDULE / MILP</small><h1>电力优化调度平台</h1></div><span id="connection" role="status" aria-live="polite">连接中…</span></header>
+<nav id="modules" aria-label="调度模块"><a href="/" class="home-link">首页</a><a href="/weekly_plan/optimization.html">周前计划</a><a href="/daily_plan/optimization.html">日前计划</a><a href="/hourly_plan/optimization.html">小时前滚动</a><a href="/shared/devices.html">共享设备参数</a><a href="/shared/network.html">共享电网模型</a></nav>
+<main><section id="device-view" class="view">
+      <div class="heading"><div><h2>设备参数</h2><small>周前、日前、小时前共用 · 柴油机与油耗曲线</small></div><button id="save-case">保存共享设备</button></div>
+      <div class="toolbar"><label>设备<select id="device-select"></select></label><span id="device-dirty" class="badge"></span><button id="copy-device">复制设备参数</button><button id="restore-device">恢复加载值</button><button id="export-device">导出设备</button><label class="file-button">导入设备<input id="import-device" type="file" accept=".json,application/json"></label></div>
+      <div id="draft-tools" class="toolbar notice" hidden><span>服务器数据已变化，本地草稿暂未加载。</span><button id="export-local-draft">导出本地草稿</button><button id="discard-local-draft">清除本地草稿</button></div><div class="panel grow"><div id="device-form" class="form-grid"></div><div class="pager"><button data-page="device:-1">上一页</button><span id="device-page"></span><button data-page="device:1">下一页</button></div><div class="notice">功率 kW；储能容量 kWh；油耗率 L/h；机组启停时长、爬坡限制按当前计划步长解释。</div></div>
+    </section></main>
+<footer><span id="db-path">SQLite</span><span id="toast" role="status">正在加载…</span></footer>
+</div><script type="module" src="/static/pages/devices.js?v=20261118-pages"></script></body></html>

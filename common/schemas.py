@@ -175,14 +175,18 @@ class Forecast(BaseModel):
         return self
 
 
-class HorizonConfig(BaseModel):
+class HorizonOptimization(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    input_interval_minutes: int = Field(default=60, gt=0)
-    forecast: Forecast
     optimization: OptimizationParameters = Field(default_factory=OptimizationParameters)
     solver: Literal["cplex", "highs", "cbc"] = "cplex"
     time_limit_seconds: float = Field(default=30, gt=0, le=3600)
     mip_gap: float = Field(default=0.01, ge=0, lt=1)
+
+
+class HorizonInputs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    input_interval_minutes: int = Field(default=60, gt=0)
+    forecast: Forecast
     start_time: datetime | None = None
 
     @model_validator(mode='after')
@@ -190,6 +194,10 @@ class HorizonConfig(BaseModel):
         if self.start_time is not None and self.start_time.utcoffset() is None:
             raise ValueError('start_time must include a timezone')
         return self
+
+
+class HorizonConfig(HorizonInputs, HorizonOptimization):
+    """Combined solve snapshot; individual web pages edit only their section."""
 
 
 class DeviceParameters(BaseModel):

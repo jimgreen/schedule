@@ -13,7 +13,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 
 浏览器访问 `http://localhost:8000/`。后台自动创建 `D:\codex\sqldb\realtime\schedule\schedule.db` SQLite 数据库，保存共享资产、油耗曲线、三层输入配置、计划版本、柴油消耗统计和模块控制审计。测试或其他部署可以通过 `SCHEDULE_DB_PATH` 覆盖默认路径。
 
-Web 页面按模块拆分为“优化参数、输入曲线、输出结果、控制审计”四个标签，并提供共享“设备参数”和“电网模型”页面。表单、油耗曲线、结果明细、历史版本和审计记录均采用分页，页面固定在单一视口内，不使用横向或纵向滚动条；JSON 模型和配置支持导入、导出、查询、修改和保存。
+Web 页面现在按真实 HTML 页面拆分，不再把功能挤在一个文档中。入口为 `/`；三个模块分别提供 `/weekly_plan/optimization.html`、`/weekly_plan/inputs.html`、`/weekly_plan/results.html`、`/weekly_plan/control.html`，日前和小时前使用相同的独立路径；共享资料位于 `/shared/devices.html` 与 `/shared/network.html`。每个页面只加载当前功能脚本，页面之间通过导航链接切换，页面固定在单一视口内，不使用横向或纵向滚动条。优化参数与输入曲线分别保存，浏览器会暂存未保存草稿并在服务器数据变化时提示冲突；JSON 模型和配置支持导入、导出、查询、修改和保存。
 
 求解器可切换 `cplex`、`highs`、`cbc`；三个计划始终按 MILP 求解。CPLEX 需要本机安装 CPLEX Python API，HiGHS 由 `highspy` 提供，CBC 需要 `cbc` 命令在 PATH 中。不可用的求解器会返回明确错误，不会降级为 LP。
 

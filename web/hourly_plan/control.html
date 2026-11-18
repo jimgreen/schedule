@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,"><title>小时前滚动 · 控制审计 · Schedule</title><link rel="stylesheet" href="/static/styles.css?v=20261118-pages"></head>
+<body data-kind="hourly" data-feature="control"><div id="app">
+<header><div><small>SCHEDULE / MILP</small><h1>电力优化调度平台</h1></div><span id="connection" role="status" aria-live="polite">连接中…</span></header>
+<nav id="modules" aria-label="调度模块"><a href="/" class="home-link">首页</a><a href="/weekly_plan/control.html">周前计划</a><a href="/daily_plan/control.html">日前计划</a><a href="/hourly_plan/control.html" aria-current="page">小时前滚动</a><a href="/shared/devices.html">共享设备参数</a><a href="/shared/network.html">共享电网模型</a></nav>
+<main><section class="view" id="module-view"><div class="heading"><div><h2>小时前滚动 · 控制审计</h2><small>16 × 15 分钟 · 4 小时</small></div><span id="dirty" class="badge"></span><button id="solve">计算本模块 MILP</button></div><nav id="functions" aria-label="模块功能"><a href="/hourly_plan/optimization.html">优化参数</a><a href="/hourly_plan/inputs.html">输入曲线</a><a href="/hourly_plan/results.html">输出结果</a><a href="/hourly_plan/control.html" aria-current="page">控制审计</a></nav><div id="control" class="feature panel">
+        <nav id="control-tabs"><button data-control-tab="operations" class="active">控制操作</button><button data-control-tab="audit">本模块审计</button><button data-control-tab="validation">校核明细</button></nav>
+        <div id="control-operations" class="subview">        <div id="control-summary" class="notice"></div>
+        <div class="toolbar"><label>上级基线<select id="parent-select"><option value="">不指定</option></select></label><span id="parent-note" class="muted"></span></div>
+        <div class="toolbar"><button data-control="validate">校核选中计划</button><button data-control="publish">发布选中计划</button><button data-control="rollback">回退本模块版本</button><button data-control="execute" id="execute">模拟执行首个15分钟</button></div>
+<p class="notice">执行仅记录首个 15 分钟模拟指令；当前为手动滚动计算。</p></div>
+        <div id="audit-filter" class="toolbar"><label>审计动作<select id="audit-action"><option value="">全部动作</option><option value="validate">校核</option><option value="weekly_solved">周前计算</option><option value="daily_solved">日前计算</option><option value="hourly_solved">小时前计算</option><option value="publish">发布</option><option value="rollback">回退</option><option value="execute">执行</option><option value="module_config_updated">参数保存</option><option value="solve_failed">求解失败</option></select></label><label>关键字<input id="audit-query" type="search" placeholder="版本号或详情，回车查询" maxlength="200"></label><button id="export-audit">导出审计 CSV</button></div>
+        <div id="audit-detail-view" class="subview" hidden><button id="audit-detail-back">返回审计列表</button><pre id="audit-detail-text"></pre><div class="pager"><button data-page="auditDetail:-1">上一页</button><span id="auditDetail-page"></span><button data-page="auditDetail:1">下一页</button></div></div>
+        <div id="control-list"></div><div id="control-pager" class="pager"><button data-page="control:-1">上一页</button><span id="control-page"></span><button data-page="control:1">下一页</button></div>
+      </div></section></main>
+<footer><span id="db-path">SQLite</span><span id="toast" role="status">正在加载…</span></footer>
+</div><script type="module" src="/static/pages/control.js?v=20261118-pages"></script></body></html>

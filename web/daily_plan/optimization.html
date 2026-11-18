@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,"><title>日前计划 · 优化参数 · Schedule</title><link rel="stylesheet" href="/static/styles.css?v=20261118-pages"></head>
+<body data-kind="daily" data-feature="optimization"><div id="app">
+<header><div><small>SCHEDULE / MILP</small><h1>电力优化调度平台</h1></div><span id="connection" role="status" aria-live="polite">连接中…</span></header>
+<nav id="modules" aria-label="调度模块"><a href="/" class="home-link">首页</a><a href="/weekly_plan/optimization.html">周前计划</a><a href="/daily_plan/optimization.html" aria-current="page">日前计划</a><a href="/hourly_plan/optimization.html">小时前滚动</a><a href="/shared/devices.html">共享设备参数</a><a href="/shared/network.html">共享电网模型</a></nav>
+<main><section class="view" id="module-view"><div class="heading"><div><h2>日前计划 · 优化参数</h2><small>96 × 15 分钟 · 24 小时</small></div><span id="dirty" class="badge"></span><button id="solve">计算本模块 MILP</button></div><nav id="functions" aria-label="模块功能"><a href="/daily_plan/optimization.html" aria-current="page">优化参数</a><a href="/daily_plan/inputs.html">输入曲线</a><a href="/daily_plan/results.html">输出结果</a><a href="/daily_plan/control.html">控制审计</a></nav><div id="module-tools" class="toolbar"><button id="save-module">保存优化参数</button><button id="export-module">导出优化参数</button><label class="file-button">导入优化参数<input id="import-module" type="file" accept=".json,application/json"></label></div><div id="draft-tools" class="toolbar notice" hidden><span>服务器数据已变化，本地草稿暂未加载。</span><button id="export-local-draft">导出本地草稿</button><button id="discard-local-draft">清除本地草稿</button></div><div id="optimization" class="feature panel">
+        <div class="solver-bar"><label>求解器<select id="solver-select"></select></label><label>时限(s)<input id="time-limit" type="number" min="1" max="3600" step="1"></label><label>MIP Gap<input id="mip-gap" type="number" min="0" max="0.99" step="0.001"></label></div>
+        <div id="solver-info" class="notice"></div><div class="toolbar quick-actions"><span>快速方案</span><button data-opt-preset="fast">快速试算</button><button data-opt-preset="balanced">均衡求解</button><button data-opt-preset="precise">精细求解</button></div><div id="optimization-form" class="form-grid"></div>
+        <div class="pager"><button data-page="opt:-1">上一页</button><span id="opt-page"></span><button data-page="opt:1">下一页</button></div>
+      </div></section></main>
+<footer><span id="db-path">SQLite</span><span id="toast" role="status">正在加载…</span></footer>
+</div><script type="module" src="/static/pages/optimization.js?v=20261118-pages"></script></body></html>

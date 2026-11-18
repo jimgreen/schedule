@@ -244,6 +244,18 @@ class ScheduleStore:
             row = connection.execute("SELECT payload FROM horizon_configs WHERE kind=?", (kind,)).fetchone()
             return HorizonConfig.model_validate_json(row["payload"]) if row else None
 
+    def update_horizon_fields(self, kind: str, fields: dict) -> HorizonConfig:
+        """Merge a page's fields atomically so other pages keep their updates."""
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT payload FROM horizon_configs WHERE kind=?", (kind,)).fetchone()
+            if row is None:
+                raise ValueError("module configuration has not been initialized")
+            current = HorizonConfig.model_validate_json(row['payload'])
+            updated = HorizonConfig.model_validate({**current.model_dump(), **fields})
+            connection.execute("UPDATE horizon_configs SET payload=?,updated_at=? WHERE kind=?", (updated.model_dump_json(), _now(), kind))
+            return updated
+
     def save_optimization(self, parameters: OptimizationParameters) -> None:
         with self._lock, self._connect() as connection:
             connection.execute("INSERT OR REPLACE INTO optimization_parameters(id,payload,updated_at) VALUES(1,?,?)", (parameters.model_dump_json(), _now()))

@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from common.sample_data import default_case
+from common.schemas import HorizonInputs, HorizonOptimization
 from common.schemas import CaseData, ControlEvent, ControlState, DeviceParameters, Forecast, Horizon, HorizonConfig, HorizonName, NetworkModel, OptimizationParameters, PlanRequest, SolverSettings
 from common.solvers import SolverFactory, SolverUnavailable
 from common.store import ScheduleStore
@@ -113,6 +114,43 @@ def module_audit(kind: str, limit: int = 100, offset: int = 0, action: str | Non
         "limit": safe_limit,
         "has_more": safe_offset + len(events) < total,
     }
+
+
+@router.get("/modules/{kind}/optimization")
+def get_module_optimization(kind: str):
+    config = _module_config(kind)
+    return config.model_dump(mode="json", include=set(HorizonOptimization.model_fields))
+
+
+@router.put("/modules/{kind}/optimization")
+def put_module_optimization(kind: str, parameters: HorizonOptimization):
+    name = _module_kind(kind)
+    ensure_case()
+    store.update_horizon_fields(kind, parameters.model_dump())
+    _event("module_config_updated", detail=f"{kind} 优化参数已更新", kind=name)
+    return parameters.model_dump(mode="json")
+
+
+@router.get("/modules/{kind}/inputs")
+def get_module_inputs(kind: str):
+    return _module_config(kind).model_dump(mode="json", include=set(HorizonInputs.model_fields))
+
+
+@router.put("/modules/{kind}/inputs")
+def put_module_inputs(kind: str, inputs: HorizonInputs):
+    name = _module_kind(kind)
+    horizon = {HorizonName.weekly: Horizon.weekly(), HorizonName.daily: Horizon.daily(), HorizonName.hourly: Horizon.hourly()}[name]
+    if inputs.input_interval_minutes != horizon.interval_minutes or len(inputs.forecast.demand_kw) != horizon.steps:
+        raise HTTPException(status_code=422, detail=f"{kind} 输入曲线必须为 {horizon.interval_minutes} 分钟、{horizon.steps} 点")
+    ensure_case()
+    store.update_horizon_fields(kind, inputs.model_dump())
+    _event("module_config_updated", detail=f"{kind} 输入曲线已更新", kind=name)
+    return inputs.model_dump(mode="json")
+
+
+@router.get("/shared/devices")
+def get_shared_devices():
+    return ensure_case().model_dump(mode="json", include=set(DeviceParameters.model_fields))
 
 
 @router.get("/modules/{kind}/control")

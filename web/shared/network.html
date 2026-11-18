@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,"><title>共享电网模型 · Schedule</title><link rel="stylesheet" href="/static/styles.css?v=20261118-pages"></head>
+<body data-kind="" data-feature="network"><div id="app">
+<header><div><small>SCHEDULE / MILP</small><h1>电力优化调度平台</h1></div><span id="connection" role="status" aria-live="polite">连接中…</span></header>
+<nav id="modules" aria-label="调度模块"><a href="/" class="home-link">首页</a><a href="/weekly_plan/optimization.html">周前计划</a><a href="/daily_plan/optimization.html">日前计划</a><a href="/hourly_plan/optimization.html">小时前滚动</a><a href="/shared/devices.html">共享设备参数</a><a href="/shared/network.html">共享电网模型</a></nav>
+<main><section id="network-view" class="view">
+      <div class="heading"><div><h2>电网模型与参数</h2><small>三层计划共用</small></div><button id="save-network">保存共享模型</button></div>
+      <div class="toolbar"><button id="export-network">导出模型</button><label class="file-button">导入模型 JSON<input id="network-file" type="file" accept=".json,application/json"></label><span id="network-dirty" class="badge"></span></div>
+      <div id="draft-tools" class="toolbar notice" hidden><span>服务器数据已变化，本地草稿暂未加载。</span><button id="export-local-draft">导出本地草稿</button><button id="discard-local-draft">清除本地草稿</button></div><div class="panel grow"><div id="network-summary" class="notice"></div><div class="notice">当前调度使用全站功率平衡与联络线约束。导入的母线、线路资料用于维护和查询，尚未参与网络潮流约束。</div><textarea id="network-json" spellcheck="false" aria-label="电网模型 JSON 分页编辑"></textarea><div class="pager"><button data-page="network:-1">上一页</button><span id="network-page"></span><button data-page="network:1">下一页</button></div></div>
+    </section></main>
+<footer><span id="db-path">SQLite</span><span id="toast" role="status">正在加载…</span></footer>
+</div><script type="module" src="/static/pages/network.js?v=20261118-pages"></script></body></html>

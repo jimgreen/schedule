@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,"><title>小时前滚动 · 输出结果 · Schedule</title><link rel="stylesheet" href="/static/styles.css?v=20261118-pages"></head>
+<body data-kind="hourly" data-feature="results"><div id="app">
+<header><div><small>SCHEDULE / MILP</small><h1>电力优化调度平台</h1></div><span id="connection" role="status" aria-live="polite">连接中…</span></header>
+<nav id="modules" aria-label="调度模块"><a href="/" class="home-link">首页</a><a href="/weekly_plan/results.html">周前计划</a><a href="/daily_plan/results.html">日前计划</a><a href="/hourly_plan/results.html" aria-current="page">小时前滚动</a><a href="/shared/devices.html">共享设备参数</a><a href="/shared/network.html">共享电网模型</a></nav>
+<main><section class="view" id="module-view"><div class="heading"><div><h2>小时前滚动 · 输出结果</h2><small>16 × 15 分钟 · 4 小时</small></div><span id="dirty" class="badge"></span><button id="solve">计算本模块 MILP</button></div><nav id="functions" aria-label="模块功能"><a href="/hourly_plan/optimization.html">优化参数</a><a href="/hourly_plan/inputs.html">输入曲线</a><a href="/hourly_plan/results.html" aria-current="page">输出结果</a><a href="/hourly_plan/control.html">控制审计</a></nav><div id="results" class="feature panel">
+        <div class="toolbar result-context"><span id="selected-plan" class="muted"></span></div>
+        <div id="result-summary" class="metrics"></div>
+        <nav id="result-tabs"><button data-result="chart" class="active">曲线</button><button data-result="dispatch">明细</button><button data-result="statistics">统计</button><button data-result="comparison">对比</button><button data-result="history">版本管理</button></nav>
+        <div id="history-result" class="subview" hidden>        <div class="toolbar"><label>本模块版本<select id="plan-select"></select></label><label>状态<select id="history-status"><option value="">全部</option><option value="solved">已求解</option><option value="feasible">可行解</option><option value="not_solved">无可用解</option></select></label><button id="reload-results">刷新结果</button><button id="compare-result">比较当前/上一版</button><button id="export-result">导出 JSON</button><button id="export-csv">导出 CSV</button></div>
+        <div class="pager"><button data-page="history:-1">较新版本</button><span id="history-page"></span><button data-page="history:1">较旧版本</button></div>
+<p class="notice">按状态筛选本模块版本；选择后通过曲线、明细、统计查看结果。导出 JSON 含完整输入快照。</p></div>
+        <div id="result-extra" class="notice"></div><label id="resource-label">对象<select id="result-resource"></select></label>
+        <div id="chart-result"><label>展示<select id="result-curve"></select></label><div id="result-chart" class="chart"></div><!-- 柴油消耗量统计 --><div id="generator-fuel" class="notice"></div></div>
+        <div id="dispatch-result" hidden><div id="dispatch-table"></div><div class="pager"><button data-page="dispatch:-1">上一页</button><span id="dispatch-page"></span><button data-page="dispatch:1">下一页</button></div></div>
+        <div id="statistics-result" class="subview" hidden><label>能量与成本 / 性能<select id="statistics-group"><option value="energy">能量统计</option><option value="cost">目标函数成本</option><option value="performance">计算性能</option></select></label><div id="statistics-table"></div><div class="pager"><button data-page="stats:-1">上一页</button><span id="stats-page"></span><button data-page="stats:1">下一页</button></div></div>
+        <div id="comparison-result" class="subview" hidden><p id="compare-note" class="notice"></p><div id="compare-table"></div></div>
+      </div></section></main>
+<footer><span id="db-path">SQLite</span><span id="toast" role="status">正在加载…</span></footer>
+</div><script src="/static/result-data.js?v=20261118-pages" defer></script><script type="module" src="/static/pages/results.js?v=20261118-pages"></script></body></html>
