@@ -12,4 +12,5 @@ data/uvicorn.out.log
 data/uvicorn.err.log
 *.log
 .playwright-cli/
+output/playwright/
 .superpowers/brainstorm/
