@@ -17,6 +17,9 @@ class FakeSolver:
             model.grid_export[t].value = 0
             model.reserve[t].value = 0
             model.lost_load[t].value = 0
+        for f in model.F:
+            for t in model.T:
+                model.flex_power[f,t].value = 0
         for r in model.R:
             for t in model.T:
                 model.renewable_dispatch[r, t].value = 0

@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import importlib.util
 import shutil
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -87,7 +88,10 @@ class SolverFactory:
     def solve(cls, model: Any, settings: SolverSettings) -> SolveReport:
         solver = cls.create(settings.name, settings)
         started = time.perf_counter()
-        result = solver.solve(model, tee=False, load_solutions=True)
+        result = solver.solve(model, tee=False, load_solutions=False)
+        has_solution = len(result.solution) > 0
+        if has_solution:
+            model.solutions.load_from(result)
         elapsed = time.perf_counter() - started
         status = str(result.solver.status)
         termination = str(result.solver.termination_condition)
@@ -95,7 +99,7 @@ class SolverFactory:
         try:
             from pyomo.environ import value
 
-            objective = float(value(model.objective))
+            objective = float(value(model.objective, exception=False)) if has_solution else None
         except Exception:
             objective = None
         gap = None
@@ -107,6 +111,10 @@ class SolverFactory:
                 except (TypeError, ValueError):
                     pass
                 break
+        if gap is not None and not math.isfinite(gap):
+            gap = None
+        if gap is None and has_solution and termination.lower() == 'optimal':
+            gap = 0.0
         return SolveReport(
             solver=settings.name,
             status=status,
@@ -115,4 +123,5 @@ class SolverFactory:
             mip_gap=gap,
             elapsed_seconds=round(elapsed, 6),
             message=f"{settings.name} returned {termination}",
+            has_solution=has_solution,
         )

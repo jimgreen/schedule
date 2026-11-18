@@ -35,6 +35,8 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
     renewables = {r.id: r for r in case.renewables}
     batteries = {b.id: b for b in case.batteries}
     flex_loads = {f.id: f for f in case.flexible_loads}
+    segment_indices = {g.id: range(len(g.fuel_curve) - 1) for g in case.generators}
+    breakpoint_indices = {g.id: range(len(g.fuel_curve)) for g in case.generators}
     model._case = case
     model._horizon = horizon
     model._forecast = forecast
@@ -44,14 +46,16 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
     model.shutdown = Var(model.G, model.T, domain=Binary)
     model.power = Var(model.G, model.T, domain=NonNegativeReals)
     model.fuel_lph = Var(model.G, model.T, domain=NonNegativeReals)
-    model.fuel_segment_on = Var(model.G, model.T, domain=Binary)
 
-    segment_ids = {(g.id, s) for g in case.generators for s in range(len(g.fuel_curve) - 1)}
-    breakpoint_ids = {(g.id, s) for g in case.generators for s in range(len(g.fuel_curve))}
+    segment_ids = [(g.id, s) for g in case.generators for s in segment_indices[g.id]]
+    breakpoint_ids = [(g.id, s) for g in case.generators for s in breakpoint_indices[g.id]]
     model.SEG = Set(dimen=2, initialize=segment_ids)
     model.BP = Set(dimen=2, initialize=breakpoint_ids)
     model.fuel_segment = Var(model.SEG, model.T, domain=Binary)
     model.fuel_lambda = Var(model.BP, model.T, domain=NonNegativeReals)
+    # Compatibility view retained for callers; the segment binaries themselves
+    # are the only variables needed by the MILP.
+    model.fuel_segment_on = Expression(model.G, model.T, rule=lambda m, g, t: sum(m.fuel_segment[g, s, t] for s in segment_indices[g]))
 
     model.renewable_dispatch = Var(model.R, model.T, domain=NonNegativeReals)
     model.renewable_curtailment = Var(model.R, model.T, domain=NonNegativeReals)
@@ -64,32 +68,38 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
     model.grid_import_mode = Var(model.T, domain=Binary)
     model.flex_power = Var(model.F, model.T, domain=NonNegativeReals)
     model.reserve = Var(model.T, domain=NonNegativeReals)
+    model.generator_reserve = Var(model.G, model.T, domain=NonNegativeReals)
+    model.battery_reserve = Var(model.B, model.T, domain=NonNegativeReals)
+    model.grid_reserve = Var(model.T, domain=NonNegativeReals)
     model.lost_load = Var(model.T, domain=NonNegativeReals)
 
     def segment_sum_rule(m: ConcreteModel, g: str, t: int) -> Any:
-        return sum(m.fuel_segment[g, s, t] for gg, s in m.SEG if gg == g) == m.unit_on[g, t]
+        return sum(m.fuel_segment[g, s, t] for s in segment_indices[g]) == m.unit_on[g, t]
 
     model.segment_sum = Constraint(model.G, model.T, rule=segment_sum_rule)
 
     def lambda_sum_rule(m: ConcreteModel, g: str, t: int) -> Any:
-        return sum(m.fuel_lambda[g, s, t] for gg, s in m.BP if gg == g) == m.unit_on[g, t]
+        return sum(m.fuel_lambda[g, s, t] for s in breakpoint_indices[g]) == m.unit_on[g, t]
 
     model.lambda_sum = Constraint(model.G, model.T, rule=lambda_sum_rule)
 
     def lambda_segment_rule(m: ConcreteModel, g: str, s: int, t: int) -> Any:
-        return m.fuel_lambda[g, s, t] + m.fuel_lambda[g, s + 1, t] <= m.fuel_segment[g, s, t] + (1 - m.unit_on[g, t])
+        adjacent = ([m.fuel_segment[g, s - 1, t]] if s > 0 else [])
+        if s < len(generators[g].fuel_curve) - 1:
+            adjacent.append(m.fuel_segment[g, s, t])
+        return m.fuel_lambda[g, s, t] <= sum(adjacent)
 
-    model.lambda_segment = Constraint(model.SEG, model.T, rule=lambda_segment_rule)
+    model.lambda_segment = Constraint(model.BP, model.T, rule=lambda_segment_rule)
 
     def power_curve_rule(m: ConcreteModel, g: str, t: int) -> Any:
         points = generators[g].fuel_curve
-        return m.power[g, t] == sum(m.fuel_lambda[g, s, t] * points[s].power_kw for gg, s in m.BP if gg == g)
+        return m.power[g, t] == sum(m.fuel_lambda[g, s, t] * points[s].power_kw for s in breakpoint_indices[g])
 
     model.fuel_curve_power_link = Constraint(model.G, model.T, rule=power_curve_rule)
 
     def fuel_curve_rule(m: ConcreteModel, g: str, t: int) -> Any:
         points = generators[g].fuel_curve
-        return m.fuel_lph[g, t] == sum(m.fuel_lambda[g, s, t] * points[s].liters_per_hour for gg, s in m.BP if gg == g)
+        return m.fuel_lph[g, t] == sum(m.fuel_lambda[g, s, t] * points[s].liters_per_hour for s in breakpoint_indices[g])
 
     model.fuel_curve_rate_link = Constraint(model.G, model.T, rule=fuel_curve_rule)
 
@@ -105,6 +115,16 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
 
     model.commitment_transition = Constraint(model.G, model.T, rule=transition_rule)
     model.start_stop_exclusive = Constraint(model.G, model.T, rule=lambda m, g, t: m.startup[g, t] + m.shutdown[g, t] <= 1)
+
+    def initial_status_lock_rule(m: ConcreteModel, g: str, t: int) -> Any:
+        gen = generators[g]
+        if gen.initial_on:
+            required_on_steps = max(0, gen.min_up_steps - gen.initial_up_steps)
+            return m.unit_on[g, t] == 1 if t < required_on_steps else Constraint.Skip
+        required_off_steps = max(0, gen.min_down_steps - gen.initial_down_steps)
+        return m.unit_on[g, t] == 0 if t < required_off_steps else Constraint.Skip
+
+    model.initial_status_lock = Constraint(model.G, model.T, rule=initial_status_lock_rule)
 
     def ramp_up_rule(m: ConcreteModel, g: str, t: int) -> Any:
         gen = generators[g]
@@ -132,7 +152,8 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
 
     def renewable_available_rule(m: ConcreteModel, r: str, t: int) -> Any:
         key = "wind_kw" if renewables[r].kind == "wind" else "pv_kw"
-        available = forecast[key][t]
+        total_capacity = sum(item.capacity_kw for item in case.renewables if item.kind == renewables[r].kind)
+        available = forecast[key][t] * renewables[r].capacity_kw / total_capacity
         return m.renewable_dispatch[r, t] + m.renewable_curtailment[r, t] == min(available, renewables[r].capacity_kw)
 
     model.renewable_available = Constraint(model.R, model.T, rule=renewable_available_rule)
@@ -166,14 +187,15 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
             setattr(model, f"flex_energy_{flex.id}", Constraint(expr=sum(model.flex_power[flex.id, t] * horizon.step_hours for t in model.T) == target_energy))
 
     def reserve_rule(m: ConcreteModel, t: int) -> Any:
-        required = forecast["demand_kw"][t] * case.forecast.reserve_fraction
-        available = sum(generators[g].max_power_kw * m.unit_on[g, t] - m.power[g, t] for g in m.G)
-        available += sum(batteries[b].max_discharge_kw - m.discharge[b, t] for b in m.B)
-        available += case.grid.import_limit_kw - m.grid_import[t]
-        return m.reserve[t] == available
+        return m.reserve[t] == sum(m.generator_reserve[g,t] for g in m.G) + sum(m.battery_reserve[b,t] for b in m.B) + m.grid_reserve[t]
 
     model.reserve_definition = Constraint(model.T, rule=reserve_rule)
-    model.reserve_requirement = Constraint(model.T, rule=lambda m, t: m.reserve[t] >= forecast["demand_kw"][t] * case.forecast.reserve_fraction)
+    model.reserve_generator_headroom = Constraint(model.G, model.T, rule=lambda m,g,t: m.generator_reserve[g,t] <= generators[g].max_power_kw*m.unit_on[g,t]-m.power[g,t])
+    model.reserve_generator_ramp = Constraint(model.G, model.T, rule=lambda m,g,t: m.generator_reserve[g,t] <= generators[g].ramp_up_kw_per_step)
+    model.reserve_battery_power = Constraint(model.B, model.T, rule=lambda m,b,t: m.battery_reserve[b,t] <= batteries[b].max_discharge_kw-m.discharge[b,t])
+    model.reserve_battery_energy = Constraint(model.B, model.T, rule=lambda m,b,t: m.battery_reserve[b,t]*horizon.step_hours <= (m.soc[b,t]-batteries[b].min_soc*batteries[b].capacity_kwh)*batteries[b].discharge_efficiency)
+    model.reserve_grid_headroom = Constraint(model.T, rule=lambda m,t: m.grid_reserve[t] <= case.grid.import_limit_kw-m.grid_import[t])
+    model.reserve_requirement = Constraint(model.T, rule=lambda m, t: m.reserve[t] >= forecast["demand_kw"][t] * case.config_for(horizon).forecast.reserve_fraction)
     model.lost_load_limit = Constraint(model.T, rule=lambda m, t: m.lost_load[t] <= forecast["demand_kw"][t] * 0.5)
 
     def power_balance_rule(m: ConcreteModel, t: int) -> Any:
@@ -193,7 +215,7 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
         model.baseline_lower = Constraint(model.G, model.T, rule=lambda m, g, t: m.baseline_deviation[g, t] >= baseline.get(g, [0.0] * horizon.steps)[t] - m.power[g, t])
 
     def objective_rule(m: ConcreteModel) -> Any:
-        params = case.optimization
+        params = case.config_for(horizon).optimization
         fuel_cost = sum(params.fuel_cost_multiplier * m.fuel_lph[g, t] * generators[g].fuel_price_per_liter * horizon.step_hours for g in m.G for t in m.T)
         startup_cost = sum(params.startup_cost_multiplier * (generators[g].startup_cost * m.startup[g, t] + generators[g].shutdown_cost * m.shutdown[g, t]) for g in m.G for t in m.T)
         grid_cost = sum(case.grid.import_price_per_kwh * m.grid_import[t] * horizon.step_hours - case.grid.export_price_per_kwh * m.grid_export[t] * horizon.step_hours for t in m.T)
@@ -201,7 +223,7 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
         curtail_cost = sum(params.curtailment_penalty * m.renewable_curtailment[r, t] * horizon.step_hours for r in m.R for t in m.T)
         reserve_cost = sum(params.reserve_penalty * m.reserve[t] * horizon.step_hours for t in m.T)
         lost_cost = sum(params.lost_load_penalty * m.lost_load[t] * horizon.step_hours for t in m.T)
-        deviation_cost = 0 if baseline_deviation is None else sum(params.baseline_deviation_penalty * m.baseline_deviation[g, t] for g in m.G for t in m.T)
+        deviation_cost = 0 if baseline_deviation is None else sum(params.baseline_deviation_penalty * m.baseline_deviation[g, t] * horizon.step_hours for g in m.G for t in m.T)
         return fuel_cost + startup_cost + grid_cost + storage_cost + curtail_cost + reserve_cost + lost_cost + deviation_cost
 
     model.objective = Objective(rule=objective_rule, sense=minimize)

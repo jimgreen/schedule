@@ -11,4 +11,5 @@ data/schedule.db-wal
 data/uvicorn.out.log
 data/uvicorn.err.log
 *.log
+.playwright-cli/
 .superpowers/brainstorm/

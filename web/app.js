@@ -1,117 +1,237 @@
-// Frontend logic is loaded after the document so every selector is optional-safe.
 (() => {
-  const $ = (selector, root = document) => root.querySelector(selector);
-  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { caseData: null, optimization: null, network: null, overview: null, plans: {}, solvers: {}, activeSolver: "highs", latestPlanId: null, curvePage: 0 };
-
-  const esc = (value) => String(value ?? "").replace(/[&<>\"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
-  const number = (value, digits = 2) => Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—";
-  const toast = (message, error = false) => { const node = $("#toast"); if (node) { node.textContent = message; node.classList.toggle("error", error); } };
-  async function api(path, options = {}) {
-    const response = await fetch(path, { headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
-    const text = await response.text();
-    let body = {};
-    try { body = text ? JSON.parse(text) : {}; } catch { body = { detail: text }; }
-    if (!response.ok) throw new Error(body.detail || `请求失败（${response.status}）`);
+  'use strict';
+  const $ = (s, root = document) => root.querySelector(s);
+  const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+  const kinds = ['weekly', 'daily', 'hourly'];
+  const names = {weekly:'周前计划', daily:'日前计划', hourly:'小时前滚动'};
+  const horizons = {weekly:'168 × 60 分钟 · 7 天', daily:'96 × 15 分钟 · 24 小时', hourly:'16 × 15 分钟 · 4 小时'};
+  const optLabels = {fuel_cost_multiplier:'燃油成本权重', startup_cost_multiplier:'启停成本权重', curtailment_penalty:'弃风弃光成本 (元/kWh)', reserve_penalty:'备用容量成本 (元/kWh)', lost_load_penalty:'失负荷惩罚 (元/kWh)', baseline_deviation_penalty:'基线偏差成本 (元/kWh)', storage_degradation_multiplier:'储能衰减权重'};
+  const fieldLabels = {id:'设备编号',name:'名称',fuel_type:'燃料类型',kind:'能源类型',min_power_kw:'最小功率 (kW)',max_power_kw:'最大功率 (kW)',ramp_up_kw_per_step:'升出力限制 (kW/步)',ramp_down_kw_per_step:'降出力限制 (kW/步)',min_up_steps:'最小开机时长 (步)',min_down_steps:'最小停机时长 (步)',startup_cost:'启动成本 (元)',shutdown_cost:'停机成本 (元)',fuel_price_per_liter:'柴油价格 (元/L)',initial_on:'初始开机',initial_power_kw:'初始出力 (kW)',initial_up_steps:'初始已开机 (步)',initial_down_steps:'初始已停机 (步)',capacity_kw:'额定功率 (kW)',capacity_kwh:'容量 (kWh)',max_charge_kw:'充电上限 (kW)',max_discharge_kw:'放电上限 (kW)',charge_efficiency:'充电效率',discharge_efficiency:'放电效率',min_soc:'SOC 下限',max_soc:'SOC 上限',initial_soc:'初始 SOC',terminal_soc:'目标 SOC (留空不约束)',degradation_cost_per_kwh:'衰减成本 (元/kWh)',min_kw:'最小功率 (kW)',max_kw:'最大功率 (kW)',shiftable_energy_kwh:'每日可调能量 (kWh)',adjustment_cost_per_kwh:'调整成本 (元/kWh)',import_limit_kw:'进口上限 (kW)',export_limit_kw:'出口上限 (kW)',import_price_per_kwh:'购电价格 (元/kWh)',export_price_per_kwh:'售电价格 (元/kWh)'};
+  const esc = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmt = (v,d=2) => v == null || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(d);
+  const clone = v => structuredClone(v);
+  const size = () => innerHeight < 650 ? 3 : innerWidth < 800 ? 4 : 6;
+  const rowCount = () => innerHeight < 700 || innerWidth < 800 ? 3 : 5;
+  const state = {kind:'weekly', feature:'optimization', shared:null, configs:{}, dirty:{}, solvers:{}, case:null, deviceDirty:false, deviceIndex:0, networkText:'', networkChunks:[], networkDirty:false, plans:{}, summaries:{}, audit:{}, controls:{}, validations:{}, parents:{}, pages:{opt:0,curve:0,device:0,network:0,history:0,dispatch:0,control:0}, resultTab:'chart',controlTab:'audit', busy:false};
+  const toast = (text,error=false) => { $('#toast').textContent=String(text).slice(0,450); $('#toast').classList.toggle('error',error); };
+  async function api(path,options={}) {
+    const response = await fetch(path,{...options,headers:{'Content-Type':'application/json',...options.headers}});
+    const body = await response.json();
+    if(!response.ok) {
+      const detail=body.detail;
+      throw new Error(Array.isArray(detail)?detail.map(v=>`${v.loc?.slice(1).join('.')}：${v.msg}`).join('；'):typeof detail==='string'?detail:`请求失败 (${response.status})`);
+    }
     return body;
   }
-  function line(values, color = "#4fd1a5") {
-    if (!Array.isArray(values) || !values.length) return '<span class="muted">暂无曲线数据</span>';
-    const max = Math.max(...values.map(Number), 1);
-    const points = values.map((value, index) => `${index * 100 / Math.max(values.length - 1, 1)},${100 - Number(value || 0) * 90 / max}`).join(" ");
-    return `<svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="曲线"><polyline fill="none" stroke="${color}" stroke-width="1.5" points="${points}"/></svg>`;
+  const put = (path,body) => api(path,{method:'PUT',body:JSON.stringify(body)});
+  function bind(selector,event,handler) {
+    $(selector)?.addEventListener(event,e=>{try {Promise.resolve(handler(e)).catch(err=>toast(err.message,true));} catch(err){toast(err.message,true);}});
   }
-  function setTab(name) {
-    $$("#tabs button").forEach((button) => button.classList.toggle("active", button.dataset.tab === name));
-    $$(".view").forEach((view) => view.classList.toggle("active", view.id === name));
-    if (["weekly", "daily", "hourly"].includes(name)) renderPlan(name);
-    if (name === "control") loadAudit().catch((error) => toast(error.message, true));
+  async function action(button,fn) {
+    if(state.busy) return;
+    state.busy=true; if(button)button.disabled=true; $('#solve').disabled=true;
+    try { await fn(); } finally { state.busy=false; if(button)button.disabled=false; $('#solve').disabled=false; }
   }
-  function renderOverview(plan = state.overview?.latest_plan) {
-    const control = state.overview?.control;
-    const firstDispatch = plan?.dispatch?.[0] || {};
-    const set = (selector, value) => { const node = $(selector); if (node) node.textContent = value; };
-    set("#fuel", plan ? number(plan.fuel_summary?.total_liters) : "—");
-    set("#solver", plan?.solver_report?.solver?.toUpperCase() || "—");
-    set("#status", plan?.status || "暂无结果");
-    set("#load", firstDispatch.demand_kw == null ? "—" : number(firstDispatch.demand_kw, 1));
-    set("#auto-state", control ? (control.auto_hourly_enabled ? "开启" : "暂停") : "—");
-    set("#db", state.caseData ? "SQLite 已加载" : "数据库检查中");
-    set("#latest-plan", plan ? `${plan.kind} · ${plan.plan_id.slice(0, 8)}` : "暂无计划");
-    const chart = $("#chart"); if (chart) chart.innerHTML = plan ? line(plan.fuel_summary?.interval_liters, "#6da8ff") : '<span class="muted">数据库中暂无计划，请先求解。</span>';
+  function dirty() { state.dirty[state.kind]=true; renderDirty(); }
+  function renderDirty() {
+    $('#dirty').textContent=state.dirty[state.kind]?'本模块有未保存修改':'本模块已保存';
+    $('#dirty').classList.toggle('dirty',!!state.dirty[state.kind]);
+    $('#device-dirty').textContent=state.deviceDirty?'共享设备有未保存修改':'共享设备已保存';
+    $('#network-dirty').textContent=state.networkDirty?'模型草稿尚未保存':'共享模型已保存';
   }
-  function generatorFields(generator) {
-    return `<div class="device-card" data-id="${esc(generator.id)}"><div class="device-title"><strong>${esc(generator.name)}</strong><span class="badge">柴油</span></div><div class="field-grid"><label>最小功率(kW)<input data-field="min_power_kw" type="number" min="0" step="1" value="${esc(generator.min_power_kw)}"></label><label>最大功率(kW)<input data-field="max_power_kw" type="number" min="1" step="1" value="${esc(generator.max_power_kw)}"></label><label>爬坡上限(kW/步)<input data-field="ramp_up_kw_per_step" type="number" min="0.1" step="1" value="${esc(generator.ramp_up_kw_per_step)}"></label><label>爬坡下限(kW/步)<input data-field="ramp_down_kw_per_step" type="number" min="0.1" step="1" value="${esc(generator.ramp_down_kw_per_step)}"></label><label>油价(元/L)<input data-field="fuel_price_per_liter" type="number" min="0" step="0.1" value="${esc(generator.fuel_price_per_liter)}"></label><label>启动成本<input data-field="startup_cost" type="number" min="0" step="0.1" value="${esc(generator.startup_cost)}"></label></div><div class="curve-mini"><span>油耗曲线</span>${generator.fuel_curve.map((point, index) => `<label>${index + 1}<input data-curve-power="${index}" type="number" min="0" step="1" value="${esc(point.power_kw)}"><input data-curve-fuel="${index}" type="number" min="0.01" step="0.1" value="${esc(point.liters_per_hour)}"><small>kW / L/h</small></label>`).join("")}</div></div>`;
+  function page(key,total,count=size()) {
+    const pages=Math.max(1,Math.ceil(total/count));
+    state.pages[key]=Math.max(0,Math.min(state.pages[key],pages-1));
+    const start=state.pages[key]*count;
+    $(`#${key}-page`) && ($(`#${key}-page`).textContent=`${state.pages[key]+1} / ${pages} 页 · ${total} 项`);
+    $$(`[data-page^="${key}:"]`).forEach(b=>b.disabled=b.dataset.page.endsWith('-1')?state.pages[key]===0:state.pages[key]===pages-1);
+    return [start,start+count];
   }
-  function renderCase() {
-    const data = state.caseData; const root = $("#device-list"); if (!data || !root) return;
-    const renewableFields = data.renewables.map((item) => `<div class="asset-row"><strong>${esc(item.name)}</strong><span class="badge">${esc(item.kind === "pv" ? "光伏" : "风电")}</span><label>容量(kW)<input data-renewable="${esc(item.id)}" type="number" min="0.1" step="1" value="${esc(item.capacity_kw)}"></label></div>`).join("");
-    const batteryFields = data.batteries.map((item) => `<div class="asset-row"><strong>${esc(item.name)}</strong><span class="badge">储能</span><label>容量(kWh)<input data-battery="${esc(item.id)}" data-battery-field="capacity_kwh" type="number" min="0.1" step="1" value="${esc(item.capacity_kwh)}"></label><label>最大充电(kW)<input data-battery="${esc(item.id)}" data-battery-field="max_charge_kw" type="number" min="0.1" step="1" value="${esc(item.max_charge_kw)}"></label><label>最大放电(kW)<input data-battery="${esc(item.id)}" data-battery-field="max_discharge_kw" type="number" min="0.1" step="1" value="${esc(item.max_discharge_kw)}"></label></div>`).join("");
-    root.innerHTML = data.generators.map(generatorFields).join("") + `<div class="asset-panel"><h3>可再生能源</h3>${renewableFields || '<span class="muted">暂无可再生能源</span>'}</div><div class="asset-panel"><h3>储能与联络线</h3>${batteryFields || '<span class="muted">暂无储能设备</span>'}<div class="asset-row grid-asset"><strong>联络线</strong><label>进口上限(kW)<input data-grid="import_limit_kw" type="number" min="0.1" step="1" value="${esc(data.grid.import_limit_kw)}"></label><label>出口上限(kW)<input data-grid="export_limit_kw" type="number" min="0" step="1" value="${esc(data.grid.export_limit_kw)}"></label><label>进口电价<input data-grid="import_price_per_kwh" type="number" min="0" step="0.01" value="${esc(data.grid.import_price_per_kwh)}"></label></div></div><div class="device-summary"><div class="row"><span>柴油机组 / 风光</span><strong>${data.generators.length} / ${data.renewables.length}</strong></div><div class="row"><span>储能 / 可调负荷</span><strong>${data.batteries.length} / ${data.flexible_loads.length}</strong></div><div class="row"><span>预测点</span><strong>${data.forecast.demand_kw.length} 小时</strong></div></div>`;
+  function inputField(label,attrs,value,type='number') {
+    return `<label>${esc(label)}<input ${attrs} type="${type}" step="any" value="${esc(value ?? '')}"></label>`;
   }
-  function collectCase() {
-    const updated = structuredClone(state.caseData);
-    $$(".device-card").forEach((card) => { const generator = updated.generators.find((item) => item.id === card.dataset.id); if (!generator) return; $$("[data-field]", card).forEach((input) => { generator[input.dataset.field] = Number(input.value); }); generator.fuel_curve.forEach((point, index) => { point.power_kw = Number($(`[data-curve-power=\"${index}\"]`, card).value); point.liters_per_hour = Number($(`[data-curve-fuel=\"${index}\"]`, card).value); }); });
-    $$("[data-renewable]").forEach((input) => { const item = updated.renewables.find((entry) => entry.id === input.dataset.renewable); if (item) item.capacity_kw = Number(input.value); });
-    $$("[data-battery]").forEach((input) => { const item = updated.batteries.find((entry) => entry.id === input.dataset.battery); if (item) item[input.dataset.batteryField] = Number(input.value); });
-    $$("[data-grid]").forEach((input) => { updated.grid[input.dataset.grid] = Number(input.value); });
-    return updated;
+  function chart(series,unit) {
+    if(!series.length || !series[0].values?.length) return '<p class="muted">暂无结果，请先计算本模块计划。</p>';
+    const values=series.flatMap(s=>s.values), max=Math.max(...values,1), n=series[0].values.length;
+    const colors=['#58d5b3','#75aaff'];
+    return `<svg viewBox="0 0 640 145" preserveAspectRatio="none" role="img" aria-label="${esc(unit)}曲线"><path d="M45 10V118H625" fill="none" stroke="#38506e"/><text x="0" y="15">${fmt(max,0)}</text><text x="18" y="118">0</text><text x="45" y="140">1</text><text x="590" y="140">${n} 时段</text>${series.map((s,i)=>`<polyline fill="none" stroke="${colors[i%2]}" stroke-width="2" points="${s.values.map((v,j)=>`${45+j*580/Math.max(n-1,1)},${118-Number(v)*100/max}`).join(' ')}"/><text x="${160+i*170}" y="12" style="fill:${colors[i%2]}">${esc(s.name)} (${esc(unit)})</text>`).join('')}</svg>`;
   }
   function renderOptimization() {
-    const root = $("#optimization-form"); if (!root || !state.optimization) return;
-    const labels = { fuel_cost_multiplier: "燃油成本权重", startup_cost_multiplier: "启停成本权重", curtailment_penalty: "弃风弃光惩罚", reserve_penalty: "备用不足惩罚", lost_load_penalty: "失负荷惩罚", baseline_deviation_penalty: "基线偏差惩罚", storage_degradation_multiplier: "储能衰减权重" };
-    root.innerHTML = Object.entries(labels).map(([key, label]) => `<label>${label}<input data-opt="${key}" type="number" min="0" step="0.01" value="${esc(state.optimization[key])}"><small>影响 MILP 目标函数</small></label>`).join("");
+    const config=state.configs[state.kind]; if(!config)return;
+    $('#solver-select').innerHTML=Object.entries(state.solvers).map(([key,info])=>`<option value="${key}">${key.toUpperCase()} · ${info.available?'可用':'未安装'}</option>`).join('');
+    $('#solver-select').value=config.solver; $('#time-limit').value=config.time_limit_seconds; $('#mip-gap').value=config.mip_gap;
+    $('#solver-info').textContent=`${names[state.kind]}独立求解配置 · 优先 CPLEX，切换求解器后保存。可用性表示接口已安装，许可证以实际求解为准。`;
+    const entries=Object.entries(optLabels), [a,b]=page('opt',entries.length);
+    $('#optimization-form').innerHTML=entries.slice(a,b).map(([key,label])=>inputField(label,`data-opt="${key}" min="0"`,config.optimization[key])).join('');
   }
-  function collectOptimization() { const result = {}; $$("[data-opt]").forEach((input) => { result[input.dataset.opt] = Number(input.value); }); return result; }
   function renderInputs() {
-    const kind = $("#curve-kind")?.value || "demand_kw"; const values = state.caseData?.forecast?.[kind] || []; const root = $("#input-curve-form"); if (!root) return;
-    const pageSize = 12; const pages = Math.max(1, Math.ceil(values.length / pageSize)); state.curvePage = Math.max(0, Math.min(state.curvePage, pages - 1)); const offset = state.curvePage * pageSize;
-    root.innerHTML = values.slice(offset, offset + pageSize).map((value, index) => { const absolute = offset + index; return `<label>${absolute + 1}<input data-curve="${absolute}" type="number" min="0" step="0.1" value="${esc(value)}"><small>${absolute < 4 ? "近端" : "小时"}</small></label>`; }).join("");
-    const page = $("#curve-page"); if (page) page.textContent = `${state.curvePage + 1} / ${pages}`; const previous = $("#curve-prev"); const next = $("#curve-next"); if (previous) previous.disabled = state.curvePage === 0; if (next) next.disabled = state.curvePage >= pages - 1;
-    const chart = $("#input-chart"); if (chart) chart.innerHTML = line(values.slice(offset, offset + pageSize), kind === "demand_kw" ? "#6da8ff" : kind === "wind_kw" ? "#4fd1a5" : "#f3c969");
+    const config=state.configs[state.kind]; if(!config)return;
+    const key=$('#curve-kind').value, values=config.forecast[key], [a,b]=page('curve',values.length);
+    $('#reserve-fraction').value=config.forecast.reserve_fraction;
+    const start=config.start_time?new Date(config.start_time):null;
+    $('#start-time').value=start?new Date(start.getTime()-start.getTimezoneOffset()*60000).toISOString().slice(0,16):'';
+    $('#input-curve-form').innerHTML=values.slice(a,b).map((v,i)=>inputField(`第 ${a+i+1} 时段 · +${(a+i)*config.input_interval_minutes} min`,`data-curve="${a+i}" min="0"`,v)).join('');
+    $('#input-chart').innerHTML=chart([{name:$('#curve-kind').selectedOptions[0].textContent,values}], 'kW');
   }
-  function collectInputs() { const updated = structuredClone(state.caseData); const kind = $("#curve-kind")?.value || "demand_kw"; $$("[data-curve]").forEach((input) => { updated.forecast[kind][Number(input.dataset.curve)] = Number(input.value); }); return updated; }
-  function renderNetwork() { const root = $("#network-summary"); if (!root || !state.network) return; root.innerHTML = `<div class="row"><span>模型名称</span><strong>${esc(state.network.name)}</strong></div><div class="row"><span>基准容量</span><strong>${number(state.network.base_mva, 2)} MVA</strong></div><div class="row"><span>母线 / 线路</span><strong>${state.network.buses.length} / ${state.network.lines.length}</strong></div><div class="row"><span>参数</span><strong>${Object.keys(state.network.parameters || {}).length} 项</strong></div>`; const textarea = $("#network-json"); if (textarea && !textarea.value) textarea.value = JSON.stringify(state.network, null, 2); }
-  function renderPlan(kind) {
-    const plan = state.plans[kind]; const root = $(`#plan-${kind}`); if (!root) return;
-    if (!plan) { root.innerHTML = '<div class="panel empty">数据库中没有该层级计划，请先求解。</div>'; return; }
-    state.latestPlanId = plan.plan_id; const byGenerator = Object.entries(plan.fuel_summary?.by_generator_liters || {}).map(([id, value]) => `<div class="row"><span>${esc(id)} 柴油消耗</span><strong>${number(value)} L</strong></div>`).join("");
-    root.innerHTML = `<div class="plan"><div class="panel"><div class="metric"><span>状态</span><strong>${esc(plan.status)}</strong></div><div class="metric"><span>目标值</span><strong>${number(plan.solver_report?.objective, 1)}</strong></div><div class="metric"><span>柴油总量</span><strong>${number(plan.fuel_summary?.total_liters)} L</strong></div><div class="row"><span>时间步长</span><strong>${plan.horizon_steps} × ${plan.interval_minutes} 分钟</strong></div>${byGenerator}</div><div class="panel"><h3>柴油消耗曲线</h3><div class="chart">${line(plan.fuel_summary?.interval_liters)}</div><div class="row"><span>求解器 / 终止</span><strong>${esc(plan.solver_report?.solver)} / ${esc(plan.solver_report?.termination)}</strong></div><div class="row"><span>MIP Gap</span><strong>${number(plan.solver_report?.mip_gap, 4)}</strong></div><div class="button-row"><button class="primary plan-control" data-action="publish" data-plan-id="${esc(plan.plan_id)}">发布此版本</button><button class="plan-control" data-action="validate" data-plan-id="${esc(plan.plan_id)}">校核</button></div></div></div>`;
-    $$(".plan-control", root).forEach((button) => button.addEventListener("click", () => control(button.dataset.action, button.dataset.planId)));
+  function renderPlan() {
+    const plan=state.plans[state.kind];
+    $('#result-summary').innerHTML=plan?[
+      ['状态',plan.status],['目标值',fmt(plan.solver_report.objective)],['柴油总量',`${fmt(plan.fuel_summary.total_liters)} L`],['求解耗时',`${fmt(plan.solver_report.elapsed_seconds)} s`]
+    ].map(([l,v])=>`<div class="metric"><small>${esc(l)}</small><strong>${esc(v)}</strong></div>`).join(''):'<p class="muted">本模块尚无结果</p>';
+    $('#chart-result').hidden=state.resultTab!=='chart'; $('#dispatch-result').hidden=state.resultTab!=='dispatch';
+    $$('[data-result]').forEach(b=>b.classList.toggle('active',b.dataset.result===state.resultTab));
+    const key=$('#result-curve').value;
+    const series=!plan?[]:key==='power'?[{name:'负荷',values:plan.dispatch.map(r=>r.demand_kw)},{name:'柴油出力',values:plan.dispatch.map(r=>Object.values(r.generators).reduce((s,v)=>s+v.power_kw,0))}]:[{name:key==='fuel'?'分时油耗':'累计油耗',values:plan.fuel_summary[key==='fuel'?'interval_liters':'cumulative_liters']}];
+    $('#result-chart').innerHTML=chart(series,key==='power'?'kW':'L');
+    $('#generator-fuel').textContent=plan?`柴油消耗量统计：${Object.entries(plan.fuel_summary.by_generator_liters).map(([k,v])=>`${k} ${fmt(v)} L`).join('；')} · ${plan.solver_report.solver.toUpperCase()} · Gap ${fmt(plan.solver_report.mip_gap,4)} · 基线 ${plan.parent_plan_id||'无'}`:'';
+    const rows=plan?.dispatch||[], [a,b]=page('dispatch',rows.length,rowCount());
+    $('#dispatch-table').innerHTML=`<table><thead><tr>${['时段','负荷 kW','柴油 kW','购电 kW','油耗 L','失负荷 kW'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.slice(a,b).map((r,i)=>`<tr><td>${r.step+1}</td><td>${fmt(r.demand_kw,1)}</td><td>${fmt(Object.values(r.generators).reduce((s,v)=>s+v.power_kw,0),1)}</td><td>${fmt(r.grid_import_kw,1)}</td><td>${fmt(plan.fuel_summary.interval_liters[a+i])}</td><td>${fmt(r.lost_load_kw,1)}</td></tr>`).join('')}</tbody></table>`;
   }
-  function renderResults() {
-    const plan = state.overview?.latest_plan; const summary = $("#result-summary"); if (summary) summary.innerHTML = plan ? `<div class="row"><span>计划类型</span><strong>${esc(plan.kind)}</strong></div><div class="row"><span>计划版本</span><strong>${esc(plan.plan_id)}</strong></div><div class="row"><span>创建时间</span><strong>${esc(plan.created_at)}</strong></div><div class="row"><span>柴油消耗</span><strong>${number(plan.fuel_summary?.total_liters)} L</strong></div>` : '<span class="muted">暂无输出结果</span>'; const chart = $("#result-chart"); if (chart) chart.innerHTML = plan ? line(plan.fuel_summary?.cumulative_liters, "#f3c969") : '<span class="muted">暂无曲线</span>'; const history = $("#history-list"); if (history) history.innerHTML = Object.values(state.plans).map((item) => `<div class="row"><span>${esc(item.kind)} · ${esc(item.plan_id.slice(0, 8))}</span><strong>${number(item.fuel_summary?.total_liters)} L</strong></div>`).join("") || '<span class="muted">暂无历史计划</span>'; }
-  async function loadCase() { state.caseData = await api("/api/case"); renderCase(); renderInputs(); renderOverview(); }
-  async function loadOverview() { state.overview = await api("/api/overview"); state.plans = { ...(state.plans || {}), ...(state.overview.plans || {}) }; if (state.overview.latest_plan) state.latestPlanId = state.overview.latest_plan.plan_id; renderOverview(); renderResults(); ["weekly", "daily", "hourly"].forEach(renderPlan); }
-  async function loadSolvers() { state.solvers = await api("/api/solver"); const select = $("#solver-select"); if (select) { select.innerHTML = Object.keys(state.solvers).map((name) => `<option value="${esc(name)}" ${name === state.activeSolver ? "selected" : ""}>${esc(name.toUpperCase())}</option>`).join(""); select.addEventListener("change", () => { state.activeSolver = select.value; }); } const root = $("#solver-list"); if (root) root.innerHTML = Object.entries(state.solvers).map(([name, info]) => `<div class="row"><strong>${esc(name.toUpperCase())}</strong><span class="${info.available ? "ok" : "bad"}">${info.available ? "可用" : "不可用"}</span></div>`).join(""); }
-  async function loadAudit() { const result = await api("/api/audit"); const root = $("#audit"); if (root) root.innerHTML = result.events.map((event) => `<div class="row"><strong>${esc(event.action)}</strong><span>${esc(event.detail)}<small>${esc(event.created_at)}</small></span></div>`).join("") || '<span class="muted">暂无审计记录</span>'; }
-  async function solve(kind) { try { toast(`正在求解 ${kind} MILP…`); const result = await api(`/api/${kind}-plan/solve`, { method: "POST", body: JSON.stringify({ solver: state.activeSolver, time_limit_seconds: Number($("#time-limit")?.value || 30), mip_gap: Number($("#mip-gap")?.value || 0.01) }) }); state.plans[kind] = result; state.latestPlanId = result.plan_id; renderPlan(kind); await loadOverview(); toast(`${kind} 计划已保存到 SQLite`); } catch (error) { toast(error.message, true); } }
-  async function control(action, planId = state.latestPlanId) { try { const query = planId ? `?plan_id=${encodeURIComponent(planId)}` : ""; await api(`/api/control/${action}${query}`, { method: "POST" }); await loadOverview(); await loadAudit(); toast("控制操作已完成"); } catch (error) { toast(error.message, true); } }
-  async function saveDevice() { state.caseData = await api("/api/case", { method: "PUT", body: JSON.stringify(collectCase()) }); renderCase(); toast("设备参数和油耗曲线已保存"); }
-  async function saveOptimization() { state.optimization = await api("/api/optimization-params", { method: "PUT", body: JSON.stringify(collectOptimization()) }); renderOptimization(); toast("优化参数已保存"); }
-  async function saveInputs() { state.caseData = await api("/api/case", { method: "PUT", body: JSON.stringify(collectInputs()) }); renderInputs(); toast("输入曲线已保存"); }
-  async function saveNetwork() { const model = JSON.parse($("#network-json").value); state.network = await api("/api/network-model", { method: "PUT", body: JSON.stringify(model) }); renderNetwork(); toast("电网模型已保存"); }
-  function bind() {
-    $$("#tabs button").forEach((button) => button.addEventListener("click", () => setTab(button.dataset.tab)));
-    $("#refresh")?.addEventListener("click", () => loadOverview().then(() => toast("总览已刷新")).catch((error) => toast(error.message, true)));
-    $("#save-case, #save-device")?.addEventListener("click", () => saveDevice().catch((error) => toast(error.message, true)));
-    $("#save-optimization")?.addEventListener("click", () => saveOptimization().catch((error) => toast(error.message, true)));
-    $("#save-inputs")?.addEventListener("click", () => saveInputs().catch((error) => toast(error.message, true)));
-    $("#save-network")?.addEventListener("click", () => saveNetwork().catch((error) => toast(`电网模型 JSON 无效：${error.message}`, true)));
-    $("#curve-kind")?.addEventListener("change", () => { state.curvePage = 0; renderInputs(); });
-    $("#curve-prev")?.addEventListener("click", () => { state.curvePage -= 1; renderInputs(); });
-    $("#curve-next")?.addEventListener("click", () => { state.curvePage += 1; renderInputs(); });
-    $("#reload-results")?.addEventListener("click", () => Promise.all([loadOverview(), loadPlans()]).then(() => toast("输出结果已刷新")).catch((error) => toast(error.message, true)));
-    $("#reload-audit")?.addEventListener("click", () => loadAudit().then(() => toast("审计已刷新")).catch((error) => toast(error.message, true)));
-    $("#load-network-file")?.addEventListener("click", () => { const file = $("#network-file")?.files?.[0]; if (!file) { toast("请选择 JSON 电网模型文件", true); return; } const reader = new FileReader(); reader.onload = () => { $("#network-json").value = reader.result; toast("已读取 JSON 文件，请检查后保存"); }; reader.readAsText(file, "utf-8"); });
-    $$(".solve").forEach((button) => button.addEventListener("click", () => solve(button.dataset.kind)));
-    $$("[data-control]").forEach((button) => button.addEventListener("click", () => control(button.dataset.control)));
+  async function loadHistory(kind=state.kind,refresh=false) {
+    const offset=state.pages.history*6;
+    const result=await api(`/api/plan-summaries?kind=${kind}&limit=7&offset=${offset}`);
+    state.summaries[kind]=result.plans;
+    if(state.kind!==kind)return;
+    const rows=result.plans.slice(0,6), current=state.plans[kind]?.plan_id;
+    $('#plan-select').innerHTML=rows.map(p=>`<option value="${esc(p.plan_id)}">${esc(p.plan_id)} · ${esc(new Date(p.created_at).toLocaleString())}</option>`).join('')||'<option value="">暂无结果</option>';
+    if(rows.some(p=>p.plan_id===current)&&!refresh)$('#plan-select').value=current;
+    $('#history-page').textContent=`版本页 ${state.pages.history+1}`;
+    $('[data-page="history:-1"]').disabled=state.pages.history===0;
+    $('[data-page="history:1"]').disabled=result.plans.length<=6;
+    const id=$('#plan-select').value;
+    if(id) state.plans[kind]=await api(`/api/plans/id/${encodeURIComponent(id)}`); else state.plans[kind]=null;
+    if(state.kind===kind)renderPlan();
   }
-  async function loadPlans() { for (const kind of ["weekly", "daily", "hourly"]) { const result = await api(`/api/plans/${kind}?limit=20`); if (result.plans?.length) state.plans[kind] = result.plans[0]; } ["weekly", "daily", "hourly"].forEach(renderPlan); renderResults(); }
+  function renderControl() {
+    const kind=state.kind, control=state.controls[kind]||{}, plan=state.plans[kind];
+    $('#control-summary').textContent=`操作计划：${plan?.plan_id||'无'}；已发布：${control.last_published_plan_id||'无'}；已模拟执行：${control.last_executed_plan_id||'无'}。在输出结果中选择版本。`;
+    $('#execute').hidden=kind!=='hourly';
+    $('#parent-select').disabled=kind==='weekly';
+    $('#parent-note').textContent=kind==='weekly'?'周前计划生成基线':'设置起点后按时间对齐基线；均留空时按相对起点对齐。';
+    $$('[data-control-tab]').forEach(b=>b.classList.toggle('active',b.dataset.controlTab===state.controlTab));
+    const validation=state.validations[kind];
+    if(state.controlTab==='validation') {
+      const rows=validation?.issues||[], [a,b]=page('control',rows.length,rowCount());
+      $('#control-list').innerHTML=validation?`<p class="notice">${esc(validation.plan_id)}：${validation.valid?'校核通过':'校核未通过'} · 最大功率偏差 ${fmt(validation.metrics.max_power_balance_error_kw,4)} kW</p><table>${rows.slice(a,b).map(r=>`<tr><td>${r.step==null?'全部':r.step+1}</td><td>${esc(r.message)}</td></tr>`).join('')}</table>`:'<p class="notice">点击校核，检查本模块选中计划的输入快照与出力。</p>';
+    } else {
+      const rows=state.audit[kind]||[];
+      $('#control-list').innerHTML=rows.length?`<table><thead><tr><th>操作 / 版本</th><th>详情</th><th>时间</th></tr></thead><tbody>${rows.slice(0,rowCount()).map(r=>`<tr><td>${esc(r.action)}<br><small>${esc(r.plan_id||'配置')}</small></td><td>${esc(r.detail)}</td><td>${esc(new Date(r.created_at).toLocaleString())}</td></tr>`).join('')}</tbody></table>`:'<p class="notice">本模块暂无审计记录。</p>';
+      $('#control-page').textContent=`审计页 ${state.pages.control+1}`;
+      $('[data-page="control:-1"]').disabled=state.pages.control===0;
+      $('[data-page="control:1"]').disabled=rows.length<=rowCount();
+    }
+  }
+  async function loadControl() {
+    const kind=state.kind;
+    const [control,audit]=await Promise.all([api(`/api/modules/${kind}/control`),api(`/api/modules/${kind}/audit?limit=${rowCount()+1}&offset=${state.pages.control*rowCount()}`)]);
+    state.controls[kind]=control; state.audit[kind]=audit.events;
+    if(kind!==state.kind)return;
+    const parent={daily:'weekly',hourly:'daily'}[kind];
+    const rows=parent?(await api(`/api/plan-summaries?kind=${parent}&limit=30`)).plans:[];
+    if(kind!==state.kind)return;
+    $('#parent-select').innerHTML='<option value="">不指定</option>'+rows.filter(r=>['solved','feasible'].includes(r.status)).map(r=>`<option value="${esc(r.plan_id)}">${esc(r.plan_id)}</option>`).join('');
+    $('#parent-select').value=state.parents[kind]||'';
+    renderControl();
+  }
+  function deviceEntries() {
+    if(!state.case)return [];
+    return ['generators','renewables','batteries','flexible_loads'].flatMap(key=>state.case[key].map((item,i)=>({key,index:i,item}))).concat([{key:'grid',item:state.case.grid}]);
+  }
+  function renderDevices() {
+    const entries=deviceEntries(); state.deviceIndex=Math.min(state.deviceIndex,entries.length-1);
+    $('#device-select').innerHTML=entries.map((v,i)=>`<option value="${i}">${esc(v.item.name||'联络线')} · ${esc(v.item.id||'grid')}</option>`).join('');
+    $('#device-select').value=state.deviceIndex;
+    const item=entries[state.deviceIndex]?.item; if(!item)return;
+    const fields=Object.keys(item).filter(k=>!['fuel_curve','fuel_type','id','kind'].includes(k)).map(k=>({key:k,label:fieldLabels[k]||k,value:item[k]}));
+    item.fuel_curve?.forEach((p,i)=>{fields.push({curve:i,key:'power_kw',label:`油耗点 ${i+1} · 出力 kW`,value:p.power_kw},{curve:i,key:'liters_per_hour',label:`油耗点 ${i+1} · 油耗 L/h`,value:p.liters_per_hour});});
+    const [a,b]=page('device',fields.length);
+    $('#device-form').innerHTML=fields.slice(a,b).map(f=>typeof f.value==='boolean'?`<label>${esc(f.label)}<select data-device-field="${f.key}"><option value="true" ${f.value?'selected':''}>开启</option><option value="false" ${!f.value?'selected':''}>关闭</option></select></label>`:inputField(f.label,`data-device-field="${f.key}" ${f.curve==null?'':`data-fuel-point="${f.curve}"`}`,f.value,typeof f.value==='string'?'text':'number')).join('');
+    renderDirty();
+  }
+  function splitNetwork() {
+    const width=Math.max(16,Math.floor(($('#network-json').clientWidth||500)/8)-3);
+    const maxLines=Math.max(3,Math.floor(($('#network-json').clientHeight||200)/20)-1);
+    const text=state.networkText, chunks=[]; let start=0, lines=1, column=0;
+    for(let i=0;i<text.length;i++) {
+      column += text.charCodeAt(i)>255?2:1;
+      if(text[i]==='\n'||column>=width){lines++;column=0;}
+      if(lines>=maxLines){chunks.push(text.slice(start,i+1));start=i+1;lines=1;}
+    }
+    chunks.push(text.slice(start)); state.networkChunks=chunks;
+  }
+  function renderNetwork() {
+    splitNetwork();const [a]=page('network',state.networkChunks.length,1);
+    $('#network-json').value=state.networkChunks[a]||'';
+    try {const m=JSON.parse(state.networkText);$('#network-summary').textContent=`${m.name} · ${m.base_mva} MVA · ${m.buses.length} 母线 / ${m.lines.length} 线路`;}catch{$('#network-summary').textContent='JSON 编辑草稿：保存时校验完整模型';}
+    renderDirty();
+  }
+  function show() {
+    $('#module-view').hidden=!!state.shared; $('#device-view').hidden=state.shared!=='device'; $('#network-view').hidden=state.shared!=='network';
+    $$('[data-module]').forEach(b=>b.classList.toggle('active',!state.shared&&b.dataset.module===state.kind));
+    $$('[data-shared]').forEach(b=>b.classList.toggle('active',b.dataset.shared===state.shared));
+    if(state.shared==='device'){renderDevices();return;} if(state.shared==='network'){renderNetwork();return;}
+    $('#module-title').textContent=names[state.kind]; $('#horizon-label').textContent=horizons[state.kind];
+    $('#scope-label').textContent=`当前：${names[state.kind]} · 本模块配置独立保存`;
+    $$('.feature').forEach(v=>v.hidden=v.id!==state.feature);
+    $$('[data-function]').forEach(b=>b.classList.toggle('active',b.dataset.function===state.feature));
+    $('#save-module').hidden=!['optimization','inputs'].includes(state.feature);
+    renderDirty(); if(state.feature==='optimization')renderOptimization();if(state.feature==='inputs')renderInputs();if(state.feature==='results')renderPlan();if(state.feature==='control')renderControl();
+  }
+  async function activate(feature=state.feature) {
+    state.feature=feature; show();
+    if(feature==='results'||feature==='control'){await loadHistory();if(feature==='control')await loadControl();}
+  }
+  function download(name,value) {
+    const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  async function readFile(event) {
+    const file=event.target.files?.[0]; if(!file)return null;
+    if(file.size>8*1024*1024)throw new Error('JSON 文件不能超过 8 MB');
+    const data=JSON.parse(await file.text());event.target.value='';return data;
+  }
+  function bindEvents() {
+    bind('#modules','click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.module){state.kind=b.dataset.module;state.shared=null;state.pages={...state.pages,opt:0,curve:0,history:0,dispatch:0,control:0};await activate();}else{state.shared=b.dataset.shared;show();}});
+    bind('#functions','click',e=>{const b=e.target.closest('[data-function]');if(b)return activate(b.dataset.function);});
+    for(const [id,key] of [['solver-select','solver'],['time-limit','time_limit_seconds'],['mip-gap','mip_gap']])bind(`#${id}`,key==='solver'?'change':'input',e=>{state.configs[state.kind][key]=key==='solver'?e.target.value:Number(e.target.value);dirty();});
+    bind('#optimization-form','input',e=>{if(e.target.dataset.opt){state.configs[state.kind].optimization[e.target.dataset.opt]=Number(e.target.value);dirty();}});
+    bind('#curve-kind','change',()=>{state.pages.curve=0;renderInputs();});
+    bind('#input-curve-form','input',e=>{if(e.target.dataset.curve!=null){state.configs[state.kind].forecast[$('#curve-kind').value][Number(e.target.dataset.curve)]=Number(e.target.value);dirty();}});
+    bind('#reserve-fraction','input',e=>{state.configs[state.kind].forecast.reserve_fraction=Number(e.target.value);dirty();});
+    bind('#start-time','change',e=>{state.configs[state.kind].start_time=e.target.value?new Date(e.target.value).toISOString():null;dirty();});
+    bind('#save-module','click',e=>action(e.target,async()=>{const kind=state.kind, data=clone(state.configs[kind]);const saved=await put(`/api/modules/${kind}/config`,data);state.configs[kind]=saved;state.dirty[kind]=false;renderDirty();toast(`${names[kind]}参数和曲线已保存`);}));
+    bind('#export-module','click',()=>download(`${state.kind}-config.json`,state.configs[state.kind]));
+    bind('#import-module','change',async e=>{const kind=state.kind,data=await readFile(e);if(!data)return;const steps={weekly:168,daily:96,hourly:16}[kind];if(!data.optimization||!data.forecast||!['demand_kw','wind_kw','pv_kw'].every(k=>Array.isArray(data.forecast[k])&&data.forecast[k].length===steps)||data.input_interval_minutes!==(kind==='weekly'?60:15))throw new Error('导入文件的步数、步长或字段不属于当前模块');state.configs[kind]=data;state.dirty[kind]=true;show();toast('已导入本模块草稿，请保存后计算');});
+    bind('#solve','click',e=>action(e.target,async()=>{const kind=state.kind;if(state.dirty[kind]||state.deviceDirty||state.networkDirty)throw new Error('请先保存当前模块和共享配置的修改');toast(`${names[kind]}正在求解…`);const result=await api(`/api/${kind}-plan/solve`,{method:'POST',body:JSON.stringify({parent_plan_id:state.parents[kind]||null})});state.plans[kind]=result;if(state.kind===kind&&!state.shared){state.pages.history=0;await activate('results');}toast(`${names[kind]}：${result.status==='not_solved'?'没有可用解，请检查输入和求解状态':'计算完成，结果已保存'}`,result.status==='not_solved');}));
+    bind('#parent-select','change',e=>{state.parents[state.kind]=e.target.value;});
+    bind('#plan-select','change',async e=>{const kind=state.kind;if(e.target.value)state.plans[kind]=await api(`/api/plans/id/${encodeURIComponent(e.target.value)}`);if(state.kind===kind)renderPlan();});
+    bind('#reload-results','click',()=>loadHistory(state.kind,true));
+    bind('#export-result','click',()=>{const plan=state.plans[state.kind];if(!plan)throw new Error('本模块暂无结果');download(`${plan.plan_id}.json`,plan);});
+    bind('#result-curve','change',renderPlan);
+    bind('#result-tabs','click',e=>{const b=e.target.closest('[data-result]');if(b){state.resultTab=b.dataset.result;renderPlan();}});
+    bind('#control-tabs','click',async e=>{const b=e.target.closest('[data-control-tab]');if(b){state.controlTab=b.dataset.controlTab;state.pages.control=0;await loadControl();}});
+    bind('#control','click',e=>{const button=e.target.closest('[data-control]');if(!button)return;return action(button,async()=>{const kind=state.kind, selected=state.plans[kind]?.plan_id;if(!selected&&button.dataset.control!=='rollback')throw new Error('请先在本模块输出结果中选择计划');const result=await api(`/api/modules/${kind}/control/${button.dataset.control}${selected?`?plan_id=${encodeURIComponent(selected)}`:''}`,{method:'POST'});if(result.validation)state.validations[kind]=result.validation;if(kind===state.kind){state.pages.control=0;state.controlTab=result.validation?'validation':'audit';await loadControl();}toast(result.validation?result.validation.valid?'计划校核通过；本模块操作已完成':`校核发现 ${result.validation.issues.length} 个问题`:'本模块操作已完成',result.validation&&!result.validation.valid);});});
+    bind('#device-select','change',e=>{state.deviceIndex=Number(e.target.value);state.pages.device=0;renderDevices();});
+    bind('#device-form','input',e=>{const k=e.target.dataset.deviceField;if(!k)return;const item=deviceEntries()[state.deviceIndex].item;if(e.target.dataset.fuelPoint!=null)item.fuel_curve[Number(e.target.dataset.fuelPoint)][k]=Number(e.target.value);else item[k]=typeof item[k]==='boolean'?e.target.value==='true':e.target.type==='text'?e.target.value:e.target.value===''?null:Number(e.target.value);state.deviceDirty=true;renderDirty();});
+    bind('#save-case','click',e=>action(e.target,async()=>{await put('/api/shared/devices',Object.fromEntries(['generators','renewables','batteries','flexible_loads','grid','fuel_price_per_liter'].map(k=>[k,state.case[k]])));state.deviceDirty=false;renderDirty();toast('共享设备已保存，三层配置保持独立');}));
+    bind('#export-device','click',()=>download('shared-devices.json',Object.fromEntries(['generators','renewables','batteries','flexible_loads','grid','fuel_price_per_liter'].map(k=>[k,state.case[k]]))));
+    bind('#import-device','change',async e=>{const data=await readFile(e);if(!data)return;if(!Array.isArray(data.generators)||!data.generators.length||!data.grid)throw new Error('缺少柴油机或联络线参数');for(const key of ['generators','renewables','batteries','flexible_loads','grid','fuel_price_per_liter'])if(key in data)state.case[key]=data[key];state.deviceDirty=true;state.deviceIndex=0;state.pages.device=0;renderDevices();toast('共享设备已载入草稿，请校验并保存');});
+    bind('#network-json','input',e=>{state.networkChunks[state.pages.network]=e.target.value;state.networkText=state.networkChunks.join('');state.networkDirty=true;renderDirty();});
+    bind('#network-file','change',async e=>{const data=await readFile(e);if(!data)return;state.networkText=JSON.stringify(data,null,2);state.networkDirty=true;state.pages.network=0;renderNetwork();toast('模型已加载为共享草稿，请保存');});
+    bind('#save-network','click',e=>action(e.target,async()=>{const model=await put('/api/network-model',JSON.parse(state.networkText));state.networkText=JSON.stringify(model,null,2);state.networkDirty=false;renderNetwork();toast('共享电网模型已保存');}));
+    bind('#export-network','click',()=>download('shared-network.json',JSON.parse(state.networkText)));
+    bind('#app','click',async e=>{const b=e.target.closest('[data-page]');if(!b)return;const [key,delta]=b.dataset.page.split(':');state.pages[key]=Math.max(0,state.pages[key]+Number(delta));if(key==='opt')renderOptimization();if(key==='curve')renderInputs();if(key==='device')renderDevices();if(key==='network')renderNetwork();if(key==='history')await loadHistory();if(key==='dispatch')renderPlan();if(key==='control'){if(state.controlTab==='audit')await loadControl();else renderControl();}});
+    window.addEventListener('beforeunload',e=>{if(Object.values(state.dirty).some(Boolean)||state.deviceDirty||state.networkDirty){e.preventDefault();e.returnValue='';}});
+    let resizeTimer;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(show,150);});
+  }
   async function init() {
-    bind();
-    try { await Promise.all([loadCase(), loadSolvers(), loadOverview(), loadAudit(), api("/api/health").then((health) => { const node = $("#connection"); if (node) node.textContent = health.case_loaded ? "SQLite 已连接" : "SQLite 已连接 · 待加载"; })]); state.optimization = await api("/api/optimization-params"); state.network = await api("/api/network-model"); renderOptimization(); renderNetwork(); renderInputs(); renderResults(); toast("数据库数据已加载"); }
-    catch (error) { const node = $("#connection"); if (node) node.textContent = "连接失败"; toast(error.message, true); }
+    try {
+      // Load the case once first: this also migrates old shared curves into isolated copies.
+      state.case=await api('/api/case');
+      const [solvers,health,...configs]=await Promise.all([api('/api/solver'),api('/api/health'),...kinds.map(k=>api(`/api/modules/${k}/config`))]);
+      state.solvers=solvers;kinds.forEach((k,i)=>state.configs[k]=configs[i]);state.networkText=JSON.stringify(state.case.network_model,null,2);
+      $('#connection').textContent='SQLite 已连接';$('#db-path').textContent=health.database;
+      bindEvents();show();toast('三层配置已独立加载；设备与电网模型共用');
+    } catch(err){$('#connection').textContent='加载失败，请刷新重试';toast(err.message,true);}
   }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();

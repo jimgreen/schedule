@@ -10,6 +10,8 @@ from .schemas import (
     Forecast,
     FuelCurvePoint,
     GridConnection,
+    HorizonConfig,
+    HorizonName,
     NetworkModel,
     OptimizationParameters,
     Renewable,
@@ -26,6 +28,21 @@ def _profile(base: float, amplitude: float, phase: float = 0.0) -> list[float]:
 
 
 def default_case() -> CaseData:
+    base_forecast = Forecast(
+        demand_kw=_profile(520, 120),
+        wind_kw=[max(0.0, 135 + 80 * math.sin((h + 4) * math.pi / 12)) for h in range(168)],
+        pv_kw=[max(0.0, 300 * math.sin((h % 24 - 6) * math.pi / 12)) for h in range(168)],
+        reserve_fraction=0.1,
+    )
+    daily_forecast = Forecast(
+        demand_kw=[round(v, 3) for v in _quarter_hour_profile(base_forecast.demand_kw[:24])],
+        wind_kw=[round(v, 3) for v in _quarter_hour_profile(base_forecast.wind_kw[:24])],
+        pv_kw=[round(v, 3) for v in _quarter_hour_profile(base_forecast.pv_kw[:24])],
+        reserve_fraction=0.1,
+    )
+    hourly_forecast = Forecast(
+        demand_kw=daily_forecast.demand_kw[:16], wind_kw=daily_forecast.wind_kw[:16], pv_kw=daily_forecast.pv_kw[:16], reserve_fraction=0.1,
+    )
     return CaseData(
         generators=[
             DieselGenerator(
@@ -54,12 +71,7 @@ def default_case() -> CaseData:
         ],
         flexible_loads=[FlexibleLoad(id="flex1", name="可调负荷", min_kw=20, max_kw=100, shiftable_energy_kwh=1440)],
         grid=GridConnection(import_limit_kw=500, export_limit_kw=220, import_price_per_kwh=0.9, export_price_per_kwh=0.25),
-        forecast=Forecast(
-            demand_kw=_profile(520, 120),
-            wind_kw=[max(0.0, 135 + 80 * math.sin((h + 4) * math.pi / 12)) for h in range(168)],
-            pv_kw=[max(0.0, 300 * math.sin((h % 24 - 6) * math.pi / 12)) for h in range(168)],
-            reserve_fraction=0.1,
-        ),
+        forecast=base_forecast,
         fuel_price_per_liter=7.5,
         optimization=OptimizationParameters(),
         network_model=NetworkModel(
@@ -67,4 +79,20 @@ def default_case() -> CaseData:
             buses=[{"id": "B1", "name": "园区母线", "voltage_kv": 10.0}],
             lines=[], parameters={"frequency_hz": 50, "operating_mode": "island_or_grid"},
         ),
+        horizon_configs={
+            HorizonName.weekly: HorizonConfig(input_interval_minutes=60, forecast=base_forecast),
+            HorizonName.daily: HorizonConfig(input_interval_minutes=15, forecast=daily_forecast),
+            HorizonName.hourly: HorizonConfig(input_interval_minutes=15, forecast=hourly_forecast),
+        },
     )
+
+
+def _quarter_hour_profile(values: list[float]) -> list[float]:
+    result: list[float] = []
+    for index in range(len(values) * 4):
+        position = index / 4
+        lower = min(int(position), len(values) - 1)
+        upper = min(lower + 1, len(values) - 1)
+        fraction = position - lower
+        result.append(values[lower] + (values[upper] - values[lower]) * fraction)
+    return result

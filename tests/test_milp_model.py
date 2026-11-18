@@ -24,3 +24,10 @@ def test_model_has_power_balance_and_storage_constraints():
     assert hasattr(model, "power_balance")
     assert hasattr(model, "soc_transition")
     assert hasattr(model, "reserve_requirement")
+
+
+def test_model_locks_initial_minimum_up_time_and_defines_reserve_as_upper_bound():
+    model = build_dispatch_model(default_case(), default_case().horizons["hourly"])
+    assert hasattr(model, "initial_status_lock")
+    assert hasattr(model, "reserve_definition")
+    assert model.fuel_segment_on["dg1", 0].expr is not None

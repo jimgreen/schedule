@@ -1,18 +1,56 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Schedule MILP 调度平台</title><link rel="stylesheet" href="/static/styles.css"></head>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Schedule · 三层优化调度</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20261118-3">
+</head>
 <body><div id="app">
-<header><div><small>SCHEDULE / MILP</small><h1>园区电力调度控制台</h1><span class="subline">SQLite 数据驱动 · 柴油机组 · 全部 MILP</span></div><span id="connection" class="connection">连接中</span></header>
-<nav id="tabs" aria-label="功能分页"><button class="active" data-tab="overview">运行总览</button><button data-tab="device">设备参数</button><button data-tab="optimization">优化参数</button><button data-tab="inputs">输入曲线</button><button data-tab="network">电网模型</button><button data-tab="weekly">周前计划</button><button data-tab="daily">日前计划</button><button data-tab="hourly">小时滚动</button><button data-tab="results">输出结果</button><button data-tab="control">控制审计</button></nav>
-<main>
-<section id="overview" class="view active"><div class="heading"><div><small>OPERATIONS</small><h2>运行总览</h2></div><button id="refresh">刷新数据库</button></div><div class="cards"><article>当前负荷<strong id="load">—</strong><small>kW</small></article><article>柴油消耗<strong id="fuel">—</strong><small>L / 最新计划</small></article><article>最新求解<strong id="solver">—</strong><small id="status">暂无结果</small></article><article>自动滚动<strong id="auto-state">—</strong><small id="db">数据库检查中</small></article></div><div class="grid"><div class="panel"><div class="panel-title"><h3>最新计划功率 / 油耗</h3><span id="latest-plan">—</span></div><div id="chart" class="chart">正在加载数据库结果…</div></div><div class="panel"><h3>数据分层</h3><div class="row"><span>设备参数</span><strong>柴油机、储能、风光、联络线</strong></div><div class="row"><span>优化参数</span><strong>目标权重、惩罚、时间限制、MIP Gap</strong></div><div class="row"><span>输入曲线</span><strong>负荷、风电、光伏、备用需求</strong></div><div class="row"><span>输出结果</span><strong>计划版本、油耗曲线、执行与审计</strong></div></div></div></section>
-<section id="device" class="view"><div class="heading"><div><small>DEVICE PARAMETERS</small><h2>设备参数（柴油机与油耗曲线）</h2></div><button id="save-case">保存设备参数</button></div><div class="panel"><div id="device-list" class="device-grid">正在加载设备参数…</div></div></section>
-<section id="optimization" class="view"><div class="heading"><div><small>OPTIMIZATION PARAMETERS</small><h2>优化参数</h2></div><button id="save-optimization">保存优化参数</button></div><div class="panel"><div id="optimization-form" class="form-grid">正在加载优化参数…</div></div></section>
-<section id="inputs" class="view"><div class="heading"><div><small>INPUT CURVES</small><h2>输入曲线</h2></div><button id="save-inputs">保存输入曲线</button></div><div class="panel"><div class="curve-toolbar"><span>按页编辑输入曲线；每页 12 点，完整曲线保存在 schedule.db</span><select id="curve-kind"><option value="demand_kw">负荷 kW</option><option value="wind_kw">风电 kW</option><option value="pv_kw">光伏 kW</option></select><div class="pagination"><button id="curve-prev">上一页</button><span id="curve-page">1 / 1</span><button id="curve-next">下一页</button></div></div><div id="input-curve-form" class="curve-grid">正在加载输入曲线…</div><div id="input-chart" class="chart"></div></div></section>
-<section id="network" class="view"><div class="heading"><div><small>GRID MODEL</small><h2>电网模型与参数</h2></div><button id="save-network">保存电网模型</button></div><div class="grid"><div class="panel"><h3>当前模型</h3><div id="network-summary">正在加载电网模型…</div></div><div class="panel"><h3>导入 JSON 电网模型</h3><input id="network-file" type="file" accept="application/json"><textarea id="network-json" placeholder='{"name":"园区模型","base_mva":10,"buses":[],"lines":[],"parameters":{}}'></textarea><button id="load-network-file">读取文件</button></div></div></section>
-<section id="weekly" class="view"><div class="heading"><div><small>WEEKLY PLAN · 168 × 60 MIN</small><h2>周前计划</h2></div><button class="solve" data-kind="weekly">求解周前 MILP</button></div><div id="plan-weekly" class="result-slot"></div></section>
-<section id="daily" class="view"><div class="heading"><div><small>DAILY PLAN · 96 × 15 MIN</small><h2>日前计划</h2></div><button class="solve" data-kind="daily">求解日前 MILP</button></div><div id="plan-daily" class="result-slot"></div></section>
-<section id="hourly" class="view"><div class="heading"><div><small>ROLLING PLAN · 16 × 15 MIN · EXECUTE 1</small><h2>小时滚动</h2></div><button class="solve" data-kind="hourly">执行滚动 MILP</button></div><div id="plan-hourly" class="result-slot"></div></section>
-<section id="results" class="view"><div class="heading"><div><small>OUTPUT RESULTS</small><h2>输出结果（柴油消耗量统计）</h2></div><button id="reload-results">刷新结果</button></div><div class="grid"><div class="panel"><h3>最新计划</h3><div id="result-summary">正在加载输出结果…</div></div><div class="panel"><h3>柴油消耗曲线</h3><div id="result-chart" class="chart"></div></div></div><div class="panel"><h3>历史计划版本 / 柴油消耗量统计</h3><div id="history-list">正在加载历史版本…</div></div></section>
-<section id="control" class="view"><div class="heading"><div><small>CONTROL & AUDIT</small><h2>控制与审计（求解器与参数）</h2></div><button id="reload-audit">刷新</button></div><div class="panel"><div class="solver-bar"><label>求解器<select id="solver-select"></select></label><label>时间限制(s)<input id="time-limit" type="number" min="1" step="1" value="30"></label><label>MIP Gap<input id="mip-gap" type="number" min="0" max="0.99" step="0.01" value="0.01"></label><div id="solver-list" class="solver-list"></div></div><div class="button-row"><button data-control="validate">校核最新计划</button><button data-control="publish">发布最新计划</button><button data-control="pause">暂停自动滚动</button><button data-control="resume">恢复自动滚动</button><button data-control="execute">执行当前 15 分钟</button><button data-control="rollback">回退发布版本</button></div><div id="audit">正在加载审计记录…</div></div></section>
-</main><footer><span>SQLite: D:\codex\sqldb\realtime\schedule\schedule.db</span><span id="toast">准备就绪</span></footer></div><script src="/static/app.js?v=20261118-1"></script></body></html>
+  <header><div><small>SCHEDULE / MILP</small><h1>电力优化调度平台</h1></div><span id="connection" role="status">连接中…</span></header>
+  <nav id="modules" aria-label="调度模块">
+    <button data-module="weekly" class="active">周前计划</button><button data-module="daily">日前计划</button><button data-module="hourly">小时前滚动</button>
+    <button data-shared="device">共享设备参数</button><button data-shared="network">共享电网模型</button>
+  </nav>
+  <main>
+    <section id="module-view" class="view">
+      <div class="heading"><div><h2 id="module-title">周前计划</h2><small id="horizon-label">168 × 60 分钟 · 7 天</small></div><span id="dirty" class="badge">已保存</span><button id="solve">计算本模块 MILP</button></div>
+      <nav id="functions" aria-label="模块功能"><button data-function="optimization" class="active">优化参数</button><button data-function="inputs">输入曲线</button><button data-function="results">输出结果</button><button data-function="control">控制审计</button></nav>
+      <div class="toolbar"><span id="scope-label"></span><button id="save-module">保存本模块参数与曲线</button><button id="export-module">导出配置</button><label class="file-button">导入配置<input id="import-module" type="file" accept=".json,application/json"></label></div>
+      <div id="optimization" class="feature panel">
+        <div class="solver-bar"><label>求解器<select id="solver-select"></select></label><label>时限(s)<input id="time-limit" type="number" min="1" max="3600" step="1"></label><label>MIP Gap<input id="mip-gap" type="number" min="0" max="0.99" step="0.001"></label></div>
+        <div id="solver-info" class="notice"></div><div id="optimization-form" class="form-grid"></div>
+        <div class="pager"><button data-page="opt:-1">上一页</button><span id="opt-page"></span><button data-page="opt:1">下一页</button></div>
+      </div>
+      <div id="inputs" class="feature panel" hidden>
+        <div class="toolbar"><label>曲线<select id="curve-kind"><option value="demand_kw">负荷 (kW)</option><option value="wind_kw">风电 (kW)</option><option value="pv_kw">光伏 (kW)</option></select></label><label>备用比例<input id="reserve-fraction" type="number" min="0" max="1" step="0.01"></label><label>起点 (本地时间；可留空)<input id="start-time" type="datetime-local"></label></div>
+        <div id="input-chart" class="chart"></div><div id="input-curve-form" class="form-grid"></div><div class="pager"><button data-page="curve:-1">上一页</button><span id="curve-page"></span><button data-page="curve:1">下一页</button></div>
+      </div>
+      <div id="results" class="feature panel" hidden>
+        <div class="toolbar"><label>本模块版本<select id="plan-select"></select></label><button id="reload-results">刷新结果</button><button id="export-result">导出结果</button></div>
+        <div class="pager"><button data-page="history:-1">较新版本</button><span id="history-page"></span><button data-page="history:1">较旧版本</button></div>
+        <div id="result-summary" class="metrics"></div>
+        <nav id="result-tabs"><button data-result="chart" class="active">曲线 / 柴油消耗量统计</button><button data-result="dispatch">出力明细</button></nav>
+        <div id="chart-result"><label>展示<select id="result-curve"><option value="fuel">柴油消耗曲线 (L/时段)</option><option value="cumulative">累计柴油消耗 (L)</option><option value="power">负荷与柴油出力 (kW)</option></select></label><div id="result-chart" class="chart"></div><div id="generator-fuel" class="notice"></div></div>
+        <div id="dispatch-result" hidden><div id="dispatch-table"></div><div class="pager"><button data-page="dispatch:-1">上一页</button><span id="dispatch-page"></span><button data-page="dispatch:1">下一页</button></div></div>
+      </div>
+      <div id="control" class="feature panel" hidden>
+        <div id="control-summary" class="notice"></div>
+        <div class="toolbar"><label>上级基线<select id="parent-select"><option value="">不指定</option></select></label><span id="parent-note" class="muted"></span></div>
+        <div class="toolbar"><button data-control="validate">校核选中计划</button><button data-control="publish">发布选中计划</button><button data-control="rollback">回退本模块版本</button><button data-control="execute" id="execute">模拟执行首个15分钟</button></div>
+        <nav id="control-tabs"><button data-control-tab="audit" class="active">本模块审计</button><button data-control-tab="validation">校核明细</button></nav>
+        <div id="control-list"></div><div class="pager"><button data-page="control:-1">上一页</button><span id="control-page"></span><button data-page="control:1">下一页</button></div>
+      </div>
+    </section>
+    <section id="device-view" class="view" hidden>
+      <div class="heading"><div><h2>设备参数</h2><small>周前、日前、小时前共用 · 柴油机与油耗曲线</small></div><button id="save-case">保存共享设备</button></div>
+      <div class="toolbar"><label>设备<select id="device-select"></select></label><span id="device-dirty" class="badge"></span><button id="export-device">导出设备</button><label class="file-button">导入设备<input id="import-device" type="file" accept=".json,application/json"></label></div>
+      <div class="panel grow"><div id="device-form" class="form-grid"></div><div class="pager"><button data-page="device:-1">上一页</button><span id="device-page"></span><button data-page="device:1">下一页</button></div><div class="notice">功率 kW；储能容量 kWh；油耗率 L/h；机组启停时长、爬坡限制按当前计划步长解释。</div></div>
+    </section>
+    <section id="network-view" class="view" hidden>
+      <div class="heading"><div><h2>电网模型与参数</h2><small>三层计划共用</small></div><button id="save-network">保存共享模型</button></div>
+      <div class="toolbar"><button id="export-network">导出模型</button><label class="file-button">导入模型 JSON<input id="network-file" type="file" accept=".json,application/json"></label><span id="network-dirty" class="badge"></span></div>
+      <div class="panel grow"><div id="network-summary" class="notice"></div><div class="notice">当前调度使用全站功率平衡与联络线约束。导入的母线、线路资料用于维护和查询，尚未参与网络潮流约束。</div><textarea id="network-json" spellcheck="false" aria-label="电网模型 JSON 分页编辑"></textarea><div class="pager"><button data-page="network:-1">上一页</button><span id="network-page"></span><button data-page="network:1">下一页</button></div></div>
+    </section>
+  </main>
+  <footer><span id="db-path">SQLite</span><span id="toast" role="status">正在加载…</span></footer>
+</div><script src="/static/app.js?v=20261118-3" defer></script></body></html>

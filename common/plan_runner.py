@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
+from math import isfinite
 
 from pyomo.environ import value
 
@@ -13,7 +14,9 @@ from .solvers import SolverFactory
 
 def _value(variable: Any) -> float:
     raw = value(variable, exception=False)
-    return 0.0 if raw is None else float(raw)
+    if raw is None or not isfinite(float(raw)):
+        raise ValueError("求解器未返回完整有限数值解")
+    return float(raw)
 
 
 class PlanRunner:
@@ -24,31 +27,37 @@ class PlanRunner:
         self.solver = solver
         self.solver_settings = SolverSettings(name=solver_name)
 
-    def run(self, baseline: dict[str, list[float]] | None = None) -> PlanResult:
+    def run(self, baseline: dict[str, list[float]] | None = None, parent_plan_id: str | None = None) -> PlanResult:
         model = build_dispatch_model(self.case, self.horizon, baseline=baseline)
         if self.solver is None:
             report = SolverFactory.solve(model, self.solver_settings)
         else:
             report = self.solver.solve(model)
-        dispatch = self._extract_dispatch(model)
+        usable = report.has_solution or (self.solver is not None and report.termination.lower() in {'optimal', 'feasible'})
+        dispatch = self._extract_dispatch(model) if usable else []
         executed = dispatch[: self.horizon.execute_steps] if self.horizon.execute_steps else dispatch
         return PlanResult(
             plan_id=f"{self.horizon.name.value}-{uuid.uuid4().hex[:10]}",
             kind=self.horizon.name,
             horizon_steps=self.horizon.steps,
             interval_minutes=self.horizon.interval_minutes,
-            status="solved" if report.termination.lower() in {"optimal", "feasible", "locallyoptimal"} else "not_solved",
+            status=("solved" if report.termination.lower() == 'optimal' else 'feasible') if usable else "not_solved",
             dispatch=dispatch,
             executed_dispatch=executed,
-            fuel_summary=self._fuel_summary(model),
+            fuel_summary=self._fuel_summary(model) if usable else FuelSummary(total_liters=0, interval_liters=[], by_generator_liters={}, cumulative_liters=[]),
             solver_report=report,
             created_at=datetime.now(timezone.utc).isoformat(),
+            parent_plan_id=parent_plan_id,
+            input_snapshot=self.case.model_copy(deep=True),
         )
 
     def _extract_dispatch(self, model: Any) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for t in model.T:
             row: dict[str, Any] = {"step": int(t), "generators": {}, "renewables": {}, "batteries": {}}
+            start = self.case.config_for(self.horizon).start_time
+            if start:
+                row['timestamp'] = (start+timedelta(minutes=int(t)*self.horizon.interval_minutes)).isoformat()
             for gen in self.case.generators:
                 row["generators"][gen.id] = {
                     "power_kw": round(_value(model.power[gen.id, t]), 4),
@@ -71,6 +80,10 @@ class PlanRunner:
                 "demand_kw": round(model._forecast["demand_kw"][int(t)], 4),
                 "wind_available_kw": round(model._forecast["wind_kw"][int(t)], 4),
                 "pv_available_kw": round(model._forecast["pv_kw"][int(t)], 4),
+                "flexible_load_kw": round(sum(_value(model.flex_power[f.id, t]) for f in self.case.flexible_loads), 4),
+                "renewable_curtailment_kw": round(sum(_value(model.renewable_curtailment[r.id, t]) for r in self.case.renewables), 4),
+                "reserve_required_kw": round(model._forecast["demand_kw"][int(t)] * self.case.config_for(self.horizon).forecast.reserve_fraction, 4),
+                "flexible_loads": {f.id: round(_value(model.flex_power[f.id,t]),4) for f in self.case.flexible_loads},
             })
             rows.append(row)
         return rows

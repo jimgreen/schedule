@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import Enum
+from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field, model_validator
+
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
 
 
 class FuelCurvePoint(BaseModel):
@@ -42,6 +46,8 @@ class DieselGenerator(BaseModel):
             raise ValueError("fuel curve power points must be strictly increasing")
         if powers[0] > self.min_power_kw or powers[-1] < self.max_power_kw:
             raise ValueError("fuel curve must cover generator operating range")
+        if (not self.initial_on and self.initial_power_kw != 0) or (self.initial_on and not self.min_power_kw <= self.initial_power_kw <= self.max_power_kw):
+            raise ValueError("initial power must agree with initial commitment and operating range")
         return self
 
 
@@ -72,6 +78,8 @@ class Battery(BaseModel):
     def validate_soc(self) -> "Battery":
         if self.min_soc > self.max_soc or not self.min_soc <= self.initial_soc <= self.max_soc:
             raise ValueError("SOC values must satisfy min <= initial <= max")
+        if self.terminal_soc is not None and not self.min_soc <= self.terminal_soc <= self.max_soc:
+            raise ValueError("terminal SOC must be within operating range")
         return self
 
 
@@ -84,10 +92,18 @@ class FlexibleLoad(BaseModel):
     shiftable_energy_kwh: float = Field(default=0, ge=0)
     adjustment_cost_per_kwh: float = Field(default=0.02, ge=0)
 
+    @model_validator(mode="after")
+    def validate_limits(self):
+        if self.min_kw > self.max_kw:
+            raise ValueError("flexible load min must not exceed max")
+        if self.shiftable_energy_kwh and not self.min_kw * 24 <= self.shiftable_energy_kwh <= self.max_kw * 24:
+            raise ValueError("daily flexible energy cannot be met within power limits")
+        return self
+
 
 class GridConnection(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    import_limit_kw: float = Field(gt=0)
+    import_limit_kw: float = Field(ge=0)
     export_limit_kw: float = Field(ge=0)
     import_price_per_kwh: float = Field(default=0.25, ge=0)
     export_price_per_kwh: float = Field(default=0.05, ge=0)
@@ -159,7 +175,41 @@ class Forecast(BaseModel):
         return self
 
 
-class CaseData(BaseModel):
+class HorizonConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    input_interval_minutes: int = Field(default=60, gt=0)
+    forecast: Forecast
+    optimization: OptimizationParameters = Field(default_factory=OptimizationParameters)
+    solver: Literal["cplex", "highs", "cbc"] = "cplex"
+    time_limit_seconds: float = Field(default=30, gt=0, le=3600)
+    mip_gap: float = Field(default=0.01, ge=0, lt=1)
+    start_time: datetime | None = None
+
+    @model_validator(mode='after')
+    def aware_time(self):
+        if self.start_time is not None and self.start_time.utcoffset() is None:
+            raise ValueError('start_time must include a timezone')
+        return self
+
+
+class DeviceParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    generators: list[DieselGenerator] = Field(min_length=1)
+    renewables: list[Renewable] = Field(default_factory=list)
+    batteries: list[Battery] = Field(default_factory=list)
+    flexible_loads: list[FlexibleLoad] = Field(default_factory=list)
+    grid: GridConnection
+    fuel_price_per_liter: float = Field(default=1, ge=0)
+
+    @model_validator(mode="after")
+    def unique_ids(self):
+        for items in (self.generators, self.renewables, self.batteries, self.flexible_loads):
+            if len({item.id for item in items}) != len(items):
+                raise ValueError("device IDs must be unique within each type")
+        return self
+
+
+class CaseData(DeviceParameters):
     model_config = ConfigDict(extra="forbid")
     generators: list[DieselGenerator] = Field(min_length=1)
     renewables: list[Renewable] = Field(default_factory=list)
@@ -170,6 +220,7 @@ class CaseData(BaseModel):
     fuel_price_per_liter: float = Field(default=1.0, ge=0)
     optimization: OptimizationParameters = Field(default_factory=OptimizationParameters)
     network_model: NetworkModel = Field(default_factory=NetworkModel)
+    horizon_configs: dict[HorizonName, HorizonConfig] = Field(default_factory=dict)
 
     @property
     def horizons(self) -> dict[str, Horizon]:
@@ -186,18 +237,24 @@ class CaseData(BaseModel):
         interpolation, then select the requested leading window.
         """
         target_hours = horizon.steps * horizon.step_hours
-        source = self.forecast
-        if horizon.interval_minutes == 60:
-            indices = [min(int(i), len(source.demand_kw) - 1) for i in range(horizon.steps)]
-            return {key: [getattr(source, key)[i] for i in indices] for key in ("demand_kw", "wind_kw", "pv_kw")}
+        config = self.horizon_configs.get(horizon.name)
+        source = config.forecast if config else self.forecast
+        source_interval = config.input_interval_minutes if config else 60
+        if source_interval == horizon.interval_minutes and len(source.demand_kw) >= horizon.steps:
+            return {key: list(getattr(source, key)[:horizon.steps]) for key in ("demand_kw", "wind_kw", "pv_kw")}
         import numpy as np
 
-        source_x = np.arange(len(source.demand_kw), dtype=float)
+        source_x = np.arange(len(source.demand_kw), dtype=float) * source_interval / 60.0
         target_x = np.arange(0, target_hours, horizon.step_hours, dtype=float)
         return {
             key: np.interp(target_x, source_x, np.asarray(getattr(source, key), dtype=float)).tolist()
             for key in ("demand_kw", "wind_kw", "pv_kw")
         }
+
+    def config_for(self, horizon: Horizon | HorizonName | str) -> HorizonConfig:
+        name = horizon.name if isinstance(horizon, Horizon) else HorizonName(horizon)
+        config = self.horizon_configs.get(name)
+        return config or HorizonConfig(forecast=self.forecast, optimization=self.optimization)
 
 
 class SolverSettings(BaseModel):
@@ -208,7 +265,7 @@ class SolverSettings(BaseModel):
 
 
 class PlanRequest(BaseModel):
-    solver: str = "cplex"
+    solver: str | None = None
     time_limit_seconds: float | None = Field(default=None, gt=0)
     mip_gap: float | None = Field(default=None, ge=0, lt=1)
     parent_plan_id: str | None = None
@@ -222,6 +279,22 @@ class SolveReport(BaseModel):
     mip_gap: float | None = None
     elapsed_seconds: float
     message: str = ""
+    has_solution: bool = False
+
+
+class ValidationIssue(BaseModel):
+    code: str
+    message: str
+    severity: Literal["error", "warning"] = "error"
+    step: int | None = None
+
+
+class PlanValidationReport(BaseModel):
+    plan_id: str
+    valid: bool
+    checked_at: str
+    issues: list[ValidationIssue] = Field(default_factory=list)
+    metrics: dict[str, float] = Field(default_factory=dict)
 
 
 class FuelSummary(BaseModel):
@@ -242,12 +315,15 @@ class PlanResult(BaseModel):
     fuel_summary: FuelSummary
     solver_report: SolveReport
     created_at: str
+    parent_plan_id: str | None = None
+    input_snapshot: CaseData | None = None
 
 
 class ControlState(BaseModel):
     auto_hourly_enabled: bool = True
     last_published_plan_id: str | None = None
     last_executed_plan_id: str | None = None
+    previous_published_plan_id: str | None = None
 
 
 class ControlEvent(BaseModel):
@@ -255,3 +331,4 @@ class ControlEvent(BaseModel):
     plan_id: str | None = None
     detail: str = ""
     created_at: str
+    kind: HorizonName | None = None
