@@ -2,11 +2,12 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" href="data:,">
   <title>Schedule · 三层优化调度</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261118-5">
+  <link rel="stylesheet" href="/static/styles.css?v=20261118-6">
 </head>
 <body><div id="app">
-  <header><div><small>SCHEDULE / MILP</small><h1>电力优化调度平台</h1></div><span id="connection" role="status">连接中…</span></header>
+  <header><div><small>SCHEDULE / MILP</small><h1>电力优化调度平台</h1></div><span id="connection" role="status" aria-live="polite">连接中…</span></header>
   <nav id="modules" aria-label="调度模块">
     <button data-module="weekly" class="active">周前计划</button><button data-module="daily">日前计划</button><button data-module="hourly">小时前滚动</button>
     <button data-shared="device">共享设备参数</button><button data-shared="network">共享电网模型</button>
@@ -18,37 +19,43 @@
       <div id="module-tools" class="toolbar"><span id="scope-label"></span><button id="save-module" title="Ctrl+S 保存当前模块">保存本模块参数与曲线</button><button id="export-module">导出配置</button><label class="file-button">导入配置<input id="import-module" type="file" accept=".json,application/json"></label></div>
       <div id="optimization" class="feature panel">
         <div class="solver-bar"><label>求解器<select id="solver-select"></select></label><label>时限(s)<input id="time-limit" type="number" min="1" max="3600" step="1"></label><label>MIP Gap<input id="mip-gap" type="number" min="0" max="0.99" step="0.001"></label></div>
-        <div id="solver-info" class="notice"></div><div id="optimization-form" class="form-grid"></div>
+        <div id="solver-info" class="notice"></div><div class="toolbar quick-actions"><span>快速方案</span><button data-opt-preset="fast">快速试算</button><button data-opt-preset="balanced">均衡求解</button><button data-opt-preset="precise">精细求解</button></div><div id="optimization-form" class="form-grid"></div>
         <div class="pager"><button data-page="opt:-1">上一页</button><span id="opt-page"></span><button data-page="opt:1">下一页</button></div>
       </div>
       <div id="inputs" class="feature panel" hidden>
-        <div class="toolbar"><label>曲线<select id="curve-kind"><option value="demand_kw">负荷 (kW)</option><option value="wind_kw">风电 (kW)</option><option value="pv_kw">光伏 (kW)</option></select></label><label>功能<select id="input-mode"><option value="edit">逐点编辑</option><option value="batch">批量调整</option><option value="settings">时间与备用</option></select></label></div>
+        <div class="toolbar"><label>曲线<select id="curve-kind"><option value="demand_kw">负荷 (kW)</option><option value="wind_kw">风电 (kW)</option><option value="pv_kw">光伏 (kW)</option></select></label><label>功能<select id="input-mode"><option value="edit">逐点编辑</option><option value="batch">批量调整</option><option value="template">曲线模板</option><option value="settings">时间与备用</option></select></label></div>
         <div id="input-edit" class="subview"><div id="input-chart" class="chart"></div><div id="input-curve-form" class="form-grid"></div><div class="pager"><label>跳至时段<input id="curve-jump" type="number" min="1" value="1"></label><button data-page="curve:-1">上一页</button><span id="curve-page"></span><button data-page="curve:1">下一页</button></div></div>
         <div id="input-batch" class="subview" hidden><div class="form-grid"><label>起始时段<input id="curve-from" type="number" min="1" value="1"></label><label>结束时段<input id="curve-to" type="number" min="1"></label><label>批量比例<input id="curve-scale" type="number" min="0" value="1" step="0.01"></label><label>批量偏移 (kW)<input id="curve-offset" type="number" value="0" step="1"></label></div><p class="notice">新值 = 原值 × 比例 + 偏移。设比例为 0 可填充固定值；负值会被拒绝。仅修改当前模块、当前曲线的草稿，保存后才参与计算。</p><div class="toolbar"><button data-curve-action="apply">应用批量调整</button><button data-curve-action="undo" disabled>撤销批量调整</button></div><div id="batch-status" class="notice" role="status"></div></div>
+        <div id="input-template" class="subview" hidden><div class="form-grid"><label>模板<select id="curve-template"><option value="flat">平坦（平均值）</option><option value="peak_valley">峰谷（先升后降）</option><option value="interpolate">首尾线性插值</option><option value="copy_parent">复制上级模块</option></select></label><label>模板比例<input id="template-scale" type="number" min="0" value="1" step="0.01"></label></div><p class="notice">模板只修改当前曲线草稿。复制上级模块按起点对齐与步长插值，需上级覆盖整个时段；使用上级当前草稿。</p><div class="toolbar"><button data-curve-action="template">应用曲线模板</button><button data-curve-action="undo" disabled>撤销模板</button><button data-curve-action="restore">恢复保存值</button></div><div id="template-status" class="notice" role="status"></div></div>
         <div id="input-settings" class="subview" hidden><div class="form-grid"><label>备用比例<input id="reserve-fraction" type="number" min="0" max="1" step="0.01"></label><label>起点 (本地时间；可留空)<input id="start-time" type="datetime-local"></label></div></div>
       </div>
       <div id="results" class="feature panel" hidden>
-        <div class="toolbar"><label>本模块版本<select id="plan-select"></select></label><button id="reload-results">刷新结果</button><button id="compare-result">比较当前/上一版</button><button id="export-result">导出 JSON</button><button id="export-csv">导出 CSV</button></div>
-        <div class="pager"><button data-page="history:-1">较新版本</button><span id="history-page"></span><button data-page="history:1">较旧版本</button></div>
+        <div class="toolbar result-context"><span id="selected-plan" class="muted"></span></div>
         <div id="result-summary" class="metrics"></div>
-        <nav id="result-tabs"><button data-result="chart" class="active">曲线（柴油消耗量统计）</button><button data-result="dispatch">明细</button><button data-result="statistics">统计</button><button data-result="comparison">对比</button></nav>
+        <nav id="result-tabs"><button data-result="chart" class="active">曲线</button><button data-result="dispatch">明细</button><button data-result="statistics">统计</button><button data-result="comparison">对比</button><button data-result="history">版本管理</button></nav>
+        <div id="history-result" class="subview" hidden>        <div class="toolbar"><label>本模块版本<select id="plan-select"></select></label><label>状态<select id="history-status"><option value="">全部</option><option value="solved">已求解</option><option value="feasible">可行解</option><option value="not_solved">无可用解</option></select></label><button id="reload-results">刷新结果</button><button id="compare-result">比较当前/上一版</button><button id="export-result">导出 JSON</button><button id="export-csv">导出 CSV</button></div>
+        <div class="pager"><button data-page="history:-1">较新版本</button><span id="history-page"></span><button data-page="history:1">较旧版本</button></div>
+<p class="notice">按状态筛选本模块版本；选择后通过曲线、明细、统计查看结果。导出 JSON 含完整输入快照。</p></div>
         <div id="result-extra" class="notice"></div><label id="resource-label">对象<select id="result-resource"></select></label>
-        <div id="chart-result"><label>展示<select id="result-curve"></select></label><div id="result-chart" class="chart"></div><div id="generator-fuel" class="notice"></div></div>
+        <div id="chart-result"><label>展示<select id="result-curve"></select></label><div id="result-chart" class="chart"></div><!-- 柴油消耗量统计 --><div id="generator-fuel" class="notice"></div></div>
         <div id="dispatch-result" hidden><div id="dispatch-table"></div><div class="pager"><button data-page="dispatch:-1">上一页</button><span id="dispatch-page"></span><button data-page="dispatch:1">下一页</button></div></div>
         <div id="statistics-result" class="subview" hidden><label>能量与成本 / 性能<select id="statistics-group"><option value="energy">能量统计</option><option value="cost">目标函数成本</option><option value="performance">计算性能</option></select></label><div id="statistics-table"></div><div class="pager"><button data-page="stats:-1">上一页</button><span id="stats-page"></span><button data-page="stats:1">下一页</button></div></div>
         <div id="comparison-result" class="subview" hidden><p id="compare-note" class="notice"></p><div id="compare-table"></div></div>
       </div>
       <div id="control" class="feature panel" hidden>
-        <div id="control-summary" class="notice"></div>
+        <nav id="control-tabs"><button data-control-tab="operations" class="active">控制操作</button><button data-control-tab="audit">本模块审计</button><button data-control-tab="validation">校核明细</button></nav>
+        <div id="control-operations" class="subview">        <div id="control-summary" class="notice"></div>
         <div class="toolbar"><label>上级基线<select id="parent-select"><option value="">不指定</option></select></label><span id="parent-note" class="muted"></span></div>
         <div class="toolbar"><button data-control="validate">校核选中计划</button><button data-control="publish">发布选中计划</button><button data-control="rollback">回退本模块版本</button><button data-control="execute" id="execute">模拟执行首个15分钟</button></div>
-        <nav id="control-tabs"><button data-control-tab="audit" class="active">本模块审计</button><button data-control-tab="validation">校核明细</button></nav>
-        <div id="control-list"></div><div class="pager"><button data-page="control:-1">上一页</button><span id="control-page"></span><button data-page="control:1">下一页</button></div>
+<p class="notice">执行仅记录首个 15 分钟模拟指令；当前为手动滚动计算。</p></div>
+        <div id="audit-filter" class="toolbar"><label>审计动作<select id="audit-action"><option value="">全部动作</option><option value="validate">校核</option><option value="weekly_solved">周前计算</option><option value="daily_solved">日前计算</option><option value="hourly_solved">小时前计算</option><option value="publish">发布</option><option value="rollback">回退</option><option value="execute">执行</option><option value="module_config_updated">参数保存</option><option value="solve_failed">求解失败</option></select></label><label>关键字<input id="audit-query" type="search" placeholder="版本号或详情，回车查询" maxlength="200"></label><button id="export-audit">导出审计 CSV</button></div>
+        <div id="audit-detail-view" class="subview" hidden><button id="audit-detail-back">返回审计列表</button><pre id="audit-detail-text"></pre><div class="pager"><button data-page="auditDetail:-1">上一页</button><span id="auditDetail-page"></span><button data-page="auditDetail:1">下一页</button></div></div>
+        <div id="control-list"></div><div id="control-pager" class="pager"><button data-page="control:-1">上一页</button><span id="control-page"></span><button data-page="control:1">下一页</button></div>
       </div>
     </section>
     <section id="device-view" class="view" hidden>
       <div class="heading"><div><h2>设备参数</h2><small>周前、日前、小时前共用 · 柴油机与油耗曲线</small></div><button id="save-case">保存共享设备</button></div>
-      <div class="toolbar"><label>设备<select id="device-select"></select></label><span id="device-dirty" class="badge"></span><button id="export-device">导出设备</button><label class="file-button">导入设备<input id="import-device" type="file" accept=".json,application/json"></label></div>
+      <div class="toolbar"><label>设备<select id="device-select"></select></label><span id="device-dirty" class="badge"></span><button id="copy-device">复制设备参数</button><button id="restore-device">恢复加载值</button><button id="export-device">导出设备</button><label class="file-button">导入设备<input id="import-device" type="file" accept=".json,application/json"></label></div>
       <div class="panel grow"><div id="device-form" class="form-grid"></div><div class="pager"><button data-page="device:-1">上一页</button><span id="device-page"></span><button data-page="device:1">下一页</button></div><div class="notice">功率 kW；储能容量 kWh；油耗率 L/h；机组启停时长、爬坡限制按当前计划步长解释。</div></div>
     </section>
     <section id="network-view" class="view" hidden>
@@ -58,4 +65,4 @@
     </section>
   </main>
   <footer><span id="db-path">SQLite</span><span id="toast" role="status">正在加载…</span></footer>
-</div><script src="/static/result-data.js?v=20261118-5" defer></script><script src="/static/app.js?v=20261118-5" defer></script></body></html>
+</div><script src="/static/result-data.js?v=20261118-6" defer></script><script src="/static/app.js?v=20261118-6" defer></script></body></html>

@@ -51,6 +51,29 @@
     if(next.some(v=>!Number.isFinite(v)||v<0))throw new Error('调整后含负值或非有限值，请修改比例或偏移');
     return next;
   }
-  const api={statistics,resources,resultView,transformCurve};
+  function curveTemplate(values, template, scale, source, target) {
+    if(!values.length || values.some(v=>!Number.isFinite(v)||v<0))throw new Error('曲线包含无效数值');
+    if(!Number.isFinite(scale)||scale<0)throw new Error('模板比例须为非负有限数');
+    let next;
+    if(template==='flat') next=values.map(()=>sum(values)/values.length);
+    else if(template==='peak_valley') {
+      const min=Math.min(...values), max=Math.max(...values);
+      next=values.map((_,i)=>min+(max-min)*(1-Math.abs(2*i/Math.max(values.length-1,1)-1)));
+    } else if(template==='interpolate') next=values.map((_,i)=>values[0]+(values.at(-1)-values[0])*i/Math.max(values.length-1,1));
+    else if(template==='copy_parent') {
+      if(!source||!target)throw new Error('当前模块没有上级曲线');
+      if(Boolean(source.start_time)!==Boolean(target.start_time))throw new Error('两模块须同时设置起点，或同时留空');
+      const offset=target.start_time?(Date.parse(target.start_time)-Date.parse(source.start_time))/60000:0;
+      if(!Number.isFinite(offset)||offset<0||offset+values.length*target.interval>source.values.length*source.interval)throw new Error('上级曲线未覆盖当前模块的完整时段');
+      next=values.map((_,i)=>{
+        const x=(offset+i*target.interval)/source.interval, a=Math.floor(x), b=Math.min(a+1,source.values.length-1);
+        return source.values[a]+(source.values[b]-source.values[a])*(x-a);
+      });
+    } else throw new Error('未知曲线模板');
+    next=next.map(v=>v*scale);
+    if(next.some(v=>!Number.isFinite(v)||v<0))throw new Error('模板生成了无效曲线');
+    return next;
+  }
+  const api={statistics,resources,resultView,transformCurve,curveTemplate};
   if(typeof module!=='undefined')module.exports=api;else window.ScheduleData=api;
 })();

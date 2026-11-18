@@ -43,8 +43,10 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
     model._forecast = forecast
 
     model.unit_on = Var(model.G, model.T, domain=Binary)
-    model.startup = Var(model.G, model.T, domain=Binary)
-    model.shutdown = Var(model.G, model.T, domain=Binary)
+    # Transition and the two status gates below force exact 0/1 starts/stops
+    # from binary unit_on; separate binary branching is unnecessary.
+    model.startup = Var(model.G, model.T, bounds=(0, 1))
+    model.shutdown = Var(model.G, model.T, bounds=(0, 1))
     model.power = Var(model.G, model.T, domain=NonNegativeReals)
     model.fuel_lph = Var(model.G, model.T, domain=NonNegativeReals)
 
@@ -77,7 +79,8 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
     model.fuel_first = Constraint(model.G, model.T, rule=lambda m,g,t: m.fuel_fraction[g,0,t] <= m.unit_on[g,t])
     model.fuel_full = Constraint(model.FUEL_GATE, model.T, rule=lambda m,g,s,t: m.fuel_fraction[g,s,t] >= m.fuel_segment[g,s,t])
     model.fuel_next = Constraint(model.FUEL_GATE, model.T, rule=lambda m,g,s,t: m.fuel_fraction[g,s+1,t] <= m.fuel_segment[g,s,t])
-    model.fuel_segment_chain = Constraint(model.FUEL_GATE, model.T, rule=lambda m,g,s,t: Constraint.Skip if s == 0 else m.fuel_segment[g,s,t] <= m.fuel_segment[g,s-1,t])
+    # fuel_full and fuel_next already imply monotone segment gates, including
+    # in the LP relaxation; no duplicate chain constraints are needed.
 
     def power_curve_rule(m: ConcreteModel, g: str, t: int) -> Any:
         points = generators[g].fuel_curve
@@ -102,7 +105,8 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
         return m.unit_on[g, t] - previous_on == m.startup[g, t] - m.shutdown[g, t]
 
     model.commitment_transition = Constraint(model.G, model.T, rule=transition_rule)
-    model.start_stop_exclusive = Constraint(model.G, model.T, rule=lambda m, g, t: m.startup[g, t] + m.shutdown[g, t] <= 1)
+    model.startup_status = Constraint(model.G, model.T, rule=lambda m, g, t: m.startup[g, t] <= m.unit_on[g, t])
+    model.shutdown_status = Constraint(model.G, model.T, rule=lambda m, g, t: m.shutdown[g, t] <= 1 - m.unit_on[g, t])
 
     def initial_status_lock_rule(m: ConcreteModel, g: str, t: int) -> Any:
         gen = generators[g]
@@ -197,10 +201,11 @@ def build_dispatch_model(case: CaseData, horizon: Horizon, baseline: dict[str, l
 
     baseline_deviation = None
     if baseline:
+        baseline_values = {g: baseline.get(g, [0.0] * horizon.steps) for g in generators}
         baseline_deviation = Var(model.G, model.T, domain=NonNegativeReals)
         model.baseline_deviation = baseline_deviation
-        model.baseline_upper = Constraint(model.G, model.T, rule=lambda m, g, t: m.baseline_deviation[g, t] >= m.power[g, t] - baseline.get(g, [0.0] * horizon.steps)[t])
-        model.baseline_lower = Constraint(model.G, model.T, rule=lambda m, g, t: m.baseline_deviation[g, t] >= baseline.get(g, [0.0] * horizon.steps)[t] - m.power[g, t])
+        model.baseline_upper = Constraint(model.G, model.T, rule=lambda m, g, t: m.baseline_deviation[g, t] >= m.power[g, t] - baseline_values[g][t])
+        model.baseline_lower = Constraint(model.G, model.T, rule=lambda m, g, t: m.baseline_deviation[g, t] >= baseline_values[g][t] - m.power[g, t])
 
     def objective_rule(m: ConcreteModel) -> Any:
         params = config.optimization

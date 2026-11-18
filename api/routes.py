@@ -3,8 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from math import floor
 from threading import Lock, RLock
+import csv
+import io
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from common.sample_data import default_case
 from common.schemas import CaseData, ControlEvent, ControlState, DeviceParameters, Forecast, Horizon, HorizonConfig, HorizonName, NetworkModel, OptimizationParameters, PlanRequest, SolverSettings
@@ -21,6 +24,16 @@ router = APIRouter(prefix="/api")
 store = ScheduleStore()
 solve_lock = Lock()
 control_lock = RLock()
+solve_state_lock = Lock()
+solve_state = {
+    "running": False,
+    "kind": None,
+    "started_at": None,
+    "finished_at": None,
+    "last_status": None,
+    "last_plan_id": None,
+    "last_error": None,
+}
 
 
 def ensure_case() -> CaseData:
@@ -88,15 +101,46 @@ def put_module_config(kind: str, config: HorizonConfig):
 
 
 @router.get("/modules/{kind}/audit")
-def module_audit(kind: str, limit: int = 100, offset: int = 0):
+def module_audit(kind: str, limit: int = 100, offset: int = 0, action: str | None = None, query: str | None = None):
     name = _module_kind(kind)
-    return {"events": [event.model_dump(mode="json") for event in store.list_events(max(1, min(limit, 500)), kind=name.value, offset=max(offset,0))]}
+    safe_limit, safe_offset = max(1, min(limit, 500)), max(offset, 0)
+    events = store.list_events(safe_limit, kind=name.value, offset=safe_offset, action=action, query=query)
+    total = store.count_events(kind=name.value, action=action, query=query)
+    return {
+        "events": [event.model_dump(mode="json") for event in events],
+        "total": total,
+        "offset": safe_offset,
+        "limit": safe_limit,
+        "has_more": safe_offset + len(events) < total,
+    }
 
 
 @router.get("/modules/{kind}/control")
 def get_module_control(kind: str):
     _module_kind(kind)
     return store.module_control(kind).model_dump(mode="json")
+
+
+@router.get("/modules/{kind}/audit/export")
+def export_module_audit(kind: str, action: str | None = None, query: str | None = None):
+    _module_kind(kind)
+
+    def csv_rows():
+        output = io.StringIO(newline="")
+        writer = csv.writer(output)
+        yield "\ufeff"
+        writer.writerow(("action", "plan_id", "detail", "created_at"))
+        yield output.getvalue()
+        for row in store.iter_event_rows(kind, action=action, query=query):
+            output.seek(0)
+            output.truncate(0)
+            # Treat user-entered text as data when opened in spreadsheet apps.
+            writer.writerow("'" + v if isinstance(v, str) and v.startswith(("=", "+", "-", "@", "\t", "\r")) else v for v in row)
+            yield output.getvalue()
+
+    return StreamingResponse(csv_rows(), media_type="text/csv; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="{kind}-audit.csv"'
+    })
 
 
 @router.post("/modules/{kind}/control/{action}")
@@ -267,12 +311,36 @@ def _run_plan(kind: str, request: PlanRequest):
 
 @router.post("/{kind}-plan/solve")
 def solve_plan(kind: str, request: PlanRequest):
+    _module_kind(kind)
     if not solve_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="已有优化任务正在运行，请完成后重试")
+    started_at = datetime.now(timezone.utc).isoformat()
+    with solve_state_lock:
+        solve_state.update({"running": True, "kind": kind, "started_at": started_at, "finished_at": None, "last_error": None, "last_status": "running", "last_plan_id": None})
     try:
-        return _run_plan(kind, request)
+        result = _run_plan(kind, request)
+        with solve_state_lock:
+            solve_state.update({"last_status": result.get("status"), "last_plan_id": result.get("plan_id")})
+        return result
+    except HTTPException as exc:
+        with solve_state_lock:
+            solve_state.update({"last_status": "error", "last_error": str(exc.detail)})
+        raise
+    except Exception as exc:
+        with solve_state_lock:
+            solve_state.update({"last_status": "error", "last_error": str(exc)})
+        raise
     finally:
+        with solve_state_lock:
+            solve_state.update({"running": False, "finished_at": datetime.now(timezone.utc).isoformat()})
         solve_lock.release()
+
+
+@router.get("/solve-status")
+def get_solve_status() -> dict:
+    """Expose the single-process solve gate for a responsive operator UI."""
+    with solve_state_lock:
+        return dict(solve_state)
 
 
 @router.get("/plans/{kind}")
@@ -319,10 +387,15 @@ def compare_plans(kind: str, left_id: str, right_id: str):
 
 
 @router.get("/plan-summaries")
-def plan_summaries(kind: str | None = None, limit: int = 50, offset: int = 0):
+def plan_summaries(kind: str | None = None, limit: int = 50, offset: int = 0, status: str | None = None):
     if kind is not None and kind not in {"weekly", "daily", "hourly"}:
         raise HTTPException(status_code=404, detail="unknown plan kind")
-    return {"plans": store.list_plan_summaries(kind, limit=max(1, min(limit, 200)), offset=max(offset,0))}
+    if status is not None and status not in {"solved", "feasible", "not_solved"}:
+        raise HTTPException(status_code=422, detail="unknown plan status")
+    safe_limit, safe_offset = max(1, min(limit, 200)), max(offset, 0)
+    plans = store.list_plan_summaries(kind, limit=safe_limit, offset=safe_offset, status=status)
+    total = store.count_plans(kind, status=status)
+    return {"plans": plans, "total": total, "offset": safe_offset, "limit": safe_limit, "has_more": safe_offset + len(plans) < total}
 
 
 @router.get("/plans/id/{plan_id}")
@@ -363,5 +436,16 @@ def control(action: str, plan_id: str | None = None, kind: str = 'hourly'):
 
 
 @router.get("/audit")
-def audit(limit: int = 100):
-    return {"events": [event.model_dump(mode="json") for event in store.list_events(max(1, min(limit, 500)))]}
+def audit(limit: int = 100, offset: int = 0, kind: str | None = None, action: str | None = None, query: str | None = None):
+    if kind is not None and kind not in {"weekly", "daily", "hourly"}:
+        raise HTTPException(status_code=404, detail="unknown module kind")
+    safe_limit, safe_offset = max(1, min(limit, 500)), max(offset, 0)
+    events = store.list_events(safe_limit, kind=kind, offset=safe_offset, action=action, query=query)
+    total = store.count_events(kind=kind, action=action, query=query)
+    return {
+        "events": [event.model_dump(mode="json") for event in events],
+        "total": total,
+        "offset": safe_offset,
+        "limit": safe_limit,
+        "has_more": safe_offset + len(events) < total,
+    }

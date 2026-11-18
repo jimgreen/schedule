@@ -149,6 +149,8 @@ class ScheduleStore:
                 connection.execute("ALTER TABLE audit_events ADD COLUMN kind TEXT")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_kind ON audit_events(kind,id DESC)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_plan_created ON plans(created_at DESC)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_plans_kind_status_created ON plans(kind,status,created_at DESC)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_kind_action ON audit_events(kind,action,id DESC)")
             connection.execute("UPDATE audit_events SET kind=(SELECT kind FROM plans WHERE plans.plan_id=audit_events.plan_id) WHERE kind IS NULL AND plan_id IS NOT NULL")
             connection.execute("INSERT OR IGNORE INTO control_state(id) VALUES (1)")
             connection.commit()
@@ -288,19 +290,33 @@ class ScheduleStore:
                 rows = connection.execute("SELECT payload FROM plans ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
             return [PlanResult.model_validate_json(row["payload"]) for row in rows]
 
-    def list_plan_summaries(self, kind: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, object]]:
-        """Return lightweight history rows without deserializing dispatch payloads."""
+    def list_plan_summaries(
+        self,
+        kind: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        status: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Return lightweight history rows without deserializing dispatch payloads.
+
+        Filtering stays in SQLite so the UI does not need to load large plan
+        payloads merely to build a history list.
+        """
         with self._lock, self._connect() as connection:
+            clauses: list[str] = []
+            params: list[object] = []
             if kind:
-                rows = connection.execute(
-                    "SELECT plan_id,kind,status,solver,objective,mip_gap,total_liters,created_at "
-                    "FROM plans WHERE kind=? ORDER BY created_at DESC LIMIT ? OFFSET ?", (kind, limit, offset)
-                ).fetchall()
-            else:
-                rows = connection.execute(
-                    "SELECT plan_id,kind,status,solver,objective,mip_gap,total_liters,created_at "
-                    "FROM plans ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)
-                ).fetchall()
+                clauses.append("kind=?")
+                params.append(kind)
+            if status:
+                clauses.append("status=?")
+                params.append(status)
+            where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+            params.extend([limit, offset])
+            rows = connection.execute(
+                "SELECT plan_id,kind,status,solver,objective,mip_gap,total_liters,created_at "
+                f"FROM plans{where} ORDER BY created_at DESC LIMIT ? OFFSET ?", params
+            ).fetchall()
             result: list[dict[str, object]] = []
             for row in rows:
                 result.append({
@@ -310,9 +326,36 @@ class ScheduleStore:
                 })
             return result
 
-    def count_events(self) -> int:
+    def count_plans(self, kind: str | None = None, status: str | None = None) -> int:
         with self._lock, self._connect() as connection:
-            row = connection.execute("SELECT COUNT(*) AS count FROM audit_events").fetchone()
+            clauses: list[str] = []
+            params: list[object] = []
+            if kind:
+                clauses.append("kind=?")
+                params.append(kind)
+            if status:
+                clauses.append("status=?")
+                params.append(status)
+            where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+            row = connection.execute(f"SELECT COUNT(*) AS count FROM plans{where}", params).fetchone()
+            return int(row["count"] if row else 0)
+
+    def count_events(self, kind: str | None = None, action: str | None = None, query: str | None = None) -> int:
+        with self._lock, self._connect() as connection:
+            clauses: list[str] = []
+            params: list[object] = []
+            if kind:
+                clauses.append("kind=?")
+                params.append(kind)
+            if action:
+                clauses.append("action=?")
+                params.append(action)
+            if query:
+                clauses.append("(detail LIKE ? OR plan_id LIKE ? OR action LIKE ?)")
+                needle = f"%{query}%"
+                params.extend([needle, needle, needle])
+            where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+            row = connection.execute(f"SELECT COUNT(*) AS count FROM audit_events{where}", params).fetchone()
             return int(row["count"] if row else 0)
 
     def case_exists(self) -> bool:
@@ -337,12 +380,51 @@ class ScheduleStore:
             connection.execute("INSERT INTO audit_events(action,plan_id,detail,created_at,kind) VALUES(?,?,?,?,?)", (event.action, event.plan_id, event.detail, event.created_at, event.kind.value if event.kind else None))
             connection.commit()
 
-    def list_events(self, limit: int = 100, kind: str | None = None, offset: int = 0) -> list[ControlEvent]:
+    def list_events(
+        self,
+        limit: int = 100,
+        kind: str | None = None,
+        offset: int = 0,
+        action: str | None = None,
+        query: str | None = None,
+    ) -> list[ControlEvent]:
         with self._lock, self._connect() as connection:
+            clauses: list[str] = []
+            params: list[object] = []
             if kind:
-                rows = connection.execute("SELECT action,plan_id,detail,created_at,kind FROM audit_events WHERE kind=? ORDER BY id DESC LIMIT ? OFFSET ?", (kind, limit, offset)).fetchall()
-            else:
-                rows = connection.execute("SELECT action,plan_id,detail,created_at,kind FROM audit_events ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+                clauses.append("kind=?")
+                params.append(kind)
+            if action:
+                clauses.append("action=?")
+                params.append(action)
+            if query:
+                clauses.append("(detail LIKE ? OR plan_id LIKE ? OR action LIKE ?)")
+                needle = f"%{query}%"
+                params.extend([needle, needle, needle])
+            where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+            params.extend([limit, offset])
+            rows = connection.execute(
+                "SELECT action,plan_id,detail,created_at,kind FROM audit_events"
+                f"{where} ORDER BY id DESC LIMIT ? OFFSET ?", params
+            ).fetchall()
             from .schemas import HorizonName
 
             return [ControlEvent(action=row["action"], plan_id=row["plan_id"], detail=row["detail"], created_at=row["created_at"], kind=HorizonName(row["kind"]) if row["kind"] else None) for row in rows]
+
+    def iter_event_rows(self, kind: str, action: str | None = None, query: str | None = None):
+        """Stream one consistent SQLite read snapshot, without OFFSET drift."""
+        clauses, params = ["kind=?"], [kind]
+        if action:
+            clauses.append("action=?")
+            params.append(action)
+        if query:
+            clauses.append("(detail LIKE ? OR plan_id LIKE ? OR action LIKE ?)")
+            params.extend([f"%{query}%"] * 3)
+        # Each read owns its connection; WAL permits writers during export.
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "SELECT action,plan_id,detail,created_at FROM audit_events WHERE "
+                + " AND ".join(clauses) + " ORDER BY id DESC", params
+            )
+            for row in cursor:
+                yield tuple(row)

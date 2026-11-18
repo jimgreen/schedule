@@ -6,3 +6,33 @@
 #statistics-result{flex:1;min-height:0}#statistics-table{flex-shrink:0}.toolbar label input[type=number]{min-width:72px;width:84px}
 .subview{display:flex;flex-direction:column;flex:1;min-height:0;gap:8px}#result-tabs button{flex:1}.pager input{width:64px}#result-extra:empty{display:none}.metric strong{overflow-wrap:anywhere}#result-summary:empty{display:none}#start-time{width:100%}#input-settings label{grid-column:1/-1}#input-batch p{margin:0}
 @media(max-width:400px){#input-batch .form-grid{gap:5px}.pager{gap:4px}.pager label{font-size:10px;gap:3px}.pager input{width:45px}#results .toolbar{gap:4px}#results .toolbar label{flex-basis:100%}#results .toolbar button{padding:5px}#result-summary .metric strong{font-size:14px}#functions{gap:3px}#generator-fuel{font-size:10px}}
+
+/* Keep navigation separate from dense work areas; paginate content instead of clipping it. */
+.chart{display:flex;flex-direction:column;min-height:90px}
+.chart svg{position:absolute;left:0;top:22px;width:100%;height:calc(100% - 22px);min-height:0}
+.chart-legend{display:flex;gap:18px;flex-wrap:wrap;flex-shrink:0;font-size:12px;line-height:18px;padding-bottom:4px}
+.quick-actions{font-size:12px}.quick-actions>span:first-child{margin-right:0}
+.result-context{flex-shrink:0;overflow-wrap:anywhere}
+#history-result .toolbar label:first-child{flex-basis:100%}
+#history-result select{max-width:100%}#history-result .pager{margin-top:auto}
+#control-tabs button{flex:1}#control-summary{line-height:1.7}
+#audit-query{width:210px}#control-list table{font-size:12px}
+#comparison-result p{margin:0}
+@media(max-width:800px){
+  #result-summary{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .metric strong{font-size:14px}.metric{padding:5px}
+  #result-tabs{gap:4px}#result-tabs button{padding-left:4px;padding-right:4px}
+  #audit-filter label{flex-basis:100%}#audit-query{flex:1;width:100%}
+  #control-operations>.toolbar{align-items:flex-start}
+  .quick-actions{gap:4px}.quick-actions>span:first-child{display:none}
+}
+@media(max-width:500px){
+  .form-grid{gap:6px}#solver-info{font-size:11px}
+  #history-result .toolbar label:first-child{flex-direction:column;align-items:stretch}
+  #history-result .toolbar label:first-child select{width:100%}
+  #history-result .pager{justify-content:space-between;gap:4px}
+}
+
+.audit-version{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#audit-detail-text{flex:1;min-height:0;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;font:12px/20px Consolas,"Microsoft YaHei",monospace}
+#audit-detail-back{align-self:flex-start}
