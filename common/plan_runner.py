@@ -4,8 +4,10 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any
 from math import isfinite
+from time import perf_counter
 
-from pyomo.environ import value
+from pyomo.environ import value, Var, Constraint
+from .analytics import energy_summary
 
 from .milp_model import build_dispatch_model
 from .schemas import CaseData, FuelSummary, Horizon, HorizonName, PlanResult, SolveReport, SolverSettings
@@ -28,13 +30,27 @@ class PlanRunner:
         self.solver_settings = SolverSettings(name=solver_name)
 
     def run(self, baseline: dict[str, list[float]] | None = None, parent_plan_id: str | None = None) -> PlanResult:
+        started = perf_counter()
         model = build_dispatch_model(self.case, self.horizon, baseline=baseline)
+        built = perf_counter()
         if self.solver is None:
             report = SolverFactory.solve(model, self.solver_settings)
         else:
             report = self.solver.solve(model)
         usable = report.has_solution or (self.solver is not None and report.termination.lower() in {'optimal', 'feasible'})
+        solved = perf_counter()
         dispatch = self._extract_dispatch(model) if usable else []
+        costs = {key: round(_value(term), 8) for key, term in model.cost_terms.items()} if usable else {}
+        fuel = self._fuel_summary(model) if usable else FuelSummary(total_liters=0, interval_liters=[], by_generator_liters={}, cumulative_liters=[])
+        variables = list(model.component_data_objects(Var))
+        performance = {
+            'build_seconds': round(built-started, 6),
+            'solve_seconds': round(solved-built, 6),
+            'extract_seconds': round(perf_counter()-solved, 6),
+            'total_seconds': round(perf_counter()-started, 6),
+            'variables': len(variables), 'binary_variables': sum(v.is_binary() for v in variables),
+            'constraints': sum(1 for _ in model.component_data_objects(Constraint)),
+        }
         executed = dispatch[: self.horizon.execute_steps] if self.horizon.execute_steps else dispatch
         return PlanResult(
             plan_id=f"{self.horizon.name.value}-{uuid.uuid4().hex[:10]}",
@@ -44,11 +60,14 @@ class PlanRunner:
             status=("solved" if report.termination.lower() == 'optimal' else 'feasible') if usable else "not_solved",
             dispatch=dispatch,
             executed_dispatch=executed,
-            fuel_summary=self._fuel_summary(model) if usable else FuelSummary(total_liters=0, interval_liters=[], by_generator_liters={}, cumulative_liters=[]),
+            fuel_summary=fuel,
             solver_report=report,
             created_at=datetime.now(timezone.utc).isoformat(),
             parent_plan_id=parent_plan_id,
             input_snapshot=self.case.model_copy(deep=True),
+            energy_summary=energy_summary(dispatch, self.horizon.interval_minutes) if usable else {},
+            cost_breakdown=costs,
+            performance=performance,
         )
 
     def _extract_dispatch(self, model: Any) -> list[dict[str, Any]]:

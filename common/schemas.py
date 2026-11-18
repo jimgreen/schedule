@@ -317,6 +317,9 @@ class PlanResult(BaseModel):
     created_at: str
     parent_plan_id: str | None = None
     input_snapshot: CaseData | None = None
+    energy_summary: dict[str, float] = Field(default_factory=dict)
+    cost_breakdown: dict[str, float] = Field(default_factory=dict)
+    performance: dict[str, float] = Field(default_factory=dict)
 
 
 class ControlState(BaseModel):

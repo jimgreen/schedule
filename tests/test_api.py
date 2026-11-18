@@ -55,6 +55,17 @@ def test_plan_validation_and_lightweight_history():
     assert summaries and summaries[0]["plan_id"] == plan_id
 
 
+def test_plan_compare_returns_compact_delta():
+    first = client.post("/api/hourly-plan/solve", json={"solver": "highs"}).json()
+    second = client.post("/api/hourly-plan/solve", json={"solver": "highs"}).json()
+    response = client.get(f"/api/plans/hourly/compare?left_id={first['plan_id']}&right_id={second['plan_id']}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["left"]["plan_id"] == first["plan_id"]
+    assert body["right"]["plan_id"] == second["plan_id"]
+    assert "energy_summary" in body["left"] and "cost_breakdown" in body["right"]
+
+
 def test_daily_plan_requires_weekly_parent_when_parent_is_given():
     response = client.post("/api/daily-plan/solve", json={"solver": "highs", "parent_plan_id": "missing"})
     assert response.status_code == 404

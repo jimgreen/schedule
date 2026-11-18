@@ -10,6 +10,8 @@ class FakeSolver:
         for g in model.G:
             for t in model.T:
                 model.unit_on[g, t].value = 1
+                model.startup[g, t].value = 0
+                model.shutdown[g, t].value = 0
                 model.power[g, t].value = 0
                 model.fuel_lph[g, t].value = 0
         for t in model.T:

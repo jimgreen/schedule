@@ -20,6 +20,7 @@ def test_module_navigation_and_no_duplicate_ids():
     assert parser.functions==['optimization','inputs','results','control']
     assert '共享设备参数' in html and '共享电网模型' in html
     assert '柴油消耗量统计' in html
+    assert '批量调整' in html and '能量与成本' in html and '比较当前/上一版' in html
     css=Path('web/styles.css').read_text(encoding='utf-8')
     assert 'overflow:hidden' in css
     assert 'overflow:auto' not in css

@@ -12,7 +12,7 @@
   const clone = v => structuredClone(v);
   const size = () => innerHeight < 650 ? 3 : innerWidth < 800 ? 4 : 6;
   const rowCount = () => innerHeight < 700 || innerWidth < 800 ? 3 : 5;
-  const state = {kind:'weekly', feature:'optimization', shared:null, configs:{}, dirty:{}, solvers:{}, case:null, deviceDirty:false, deviceIndex:0, networkText:'', networkChunks:[], networkDirty:false, plans:{}, summaries:{}, audit:{}, controls:{}, validations:{}, parents:{}, pages:{opt:0,curve:0,device:0,network:0,history:0,dispatch:0,control:0}, resultTab:'chart',controlTab:'audit', busy:false};
+  const state = {kind:'weekly', feature:'optimization', shared:null, configs:{}, dirty:{}, solvers:{}, case:null, deviceDirty:false, deviceIndex:0, networkText:'', networkChunks:[], networkDirty:false, plans:{}, summaries:{}, comparisons:{}, curveHistory:{}, audit:{}, controls:{}, validations:{}, parents:{}, pages:{opt:0,curve:0,device:0,network:0,history:0,dispatch:0,control:0}, resultTab:'chart',controlTab:'audit', busy:false};
   const toast = (text,error=false) => { $('#toast').textContent=String(text).slice(0,450); $('#toast').classList.toggle('error',error); };
   async function api(path,options={}) {
     const response = await fetch(path,{...options,headers:{'Content-Type':'application/json',...options.headers}});
@@ -72,18 +72,48 @@
     $('#start-time').value=start?new Date(start.getTime()-start.getTimezoneOffset()*60000).toISOString().slice(0,16):'';
     $('#input-curve-form').innerHTML=values.slice(a,b).map((v,i)=>inputField(`第 ${a+i+1} 时段 · +${(a+i)*config.input_interval_minutes} min`,`data-curve="${a+i}" min="0"`,v)).join('');
     $('#input-chart').innerHTML=chart([{name:$('#curve-kind').selectedOptions[0].textContent,values}], 'kW');
+    const history=state.curveHistory[`${state.kind}:${key}`]||[];
+    $('[data-curve-action="undo"]').disabled=!history.length;
+  }
+  function curveKey() { return `${state.kind}:${$('#curve-kind').value}`; }
+  function rememberCurve() {
+    const key=curveKey(), history=state.curveHistory[key]||[];
+    history.push(clone(state.configs[state.kind].forecast[$('#curve-kind').value]));
+    state.curveHistory[key]=history.slice(-20);
+  }
+  function curveAction(action) {
+    const config=state.configs[state.kind], name=$('#curve-kind').value, values=config.forecast[name];
+    if(!values?.length)return;
+    if(action==='undo') {
+      const history=state.curveHistory[curveKey()]||[], previous=history.pop();
+      if(!previous)return;
+      config.forecast[name]=previous; state.curveHistory[curveKey()]=history; dirty(); renderInputs(); return;
+    }
+    rememberCurve();
+    if(action==='apply') {
+      const scale=Number($('#curve-scale').value), offset=Number($('#curve-offset').value);
+      if(!Number.isFinite(scale)||scale<0||!Number.isFinite(offset))throw new Error('比例必须为非负数，偏移必须为数字');
+      config.forecast[name]=values.map(value=>Math.max(0,value*scale+offset));
+    } else if(action==='smooth') {
+      config.forecast[name]=values.map((value,index)=>index===0||index===values.length-1?value:Math.max(0,(values[index-1]+value+values[index+1])/3));
+    }
+    dirty(); renderInputs();
   }
   function renderPlan() {
     const plan=state.plans[state.kind];
     $('#result-summary').innerHTML=plan?[
       ['状态',plan.status],['目标值',fmt(plan.solver_report.objective)],['柴油总量',`${fmt(plan.fuel_summary.total_liters)} L`],['求解耗时',`${fmt(plan.solver_report.elapsed_seconds)} s`]
     ].map(([l,v])=>`<div class="metric"><small>${esc(l)}</small><strong>${esc(v)}</strong></div>`).join(''):'<p class="muted">本模块尚无结果</p>';
-    $('#chart-result').hidden=state.resultTab!=='chart'; $('#dispatch-result').hidden=state.resultTab!=='dispatch';
+    $('#chart-result').hidden=state.resultTab!=='chart'; $('#dispatch-result').hidden=state.resultTab!=='dispatch'; $('#statistics-result').hidden=state.resultTab!=='statistics';
     $$('[data-result]').forEach(b=>b.classList.toggle('active',b.dataset.result===state.resultTab));
     const key=$('#result-curve').value;
     const series=!plan?[]:key==='power'?[{name:'负荷',values:plan.dispatch.map(r=>r.demand_kw)},{name:'柴油出力',values:plan.dispatch.map(r=>Object.values(r.generators).reduce((s,v)=>s+v.power_kw,0))}]:[{name:key==='fuel'?'分时油耗':'累计油耗',values:plan.fuel_summary[key==='fuel'?'interval_liters':'cumulative_liters']}];
     $('#result-chart').innerHTML=chart(series,key==='power'?'kW':'L');
     $('#generator-fuel').textContent=plan?`柴油消耗量统计：${Object.entries(plan.fuel_summary.by_generator_liters).map(([k,v])=>`${k} ${fmt(v)} L`).join('；')} · ${plan.solver_report.solver.toUpperCase()} · Gap ${fmt(plan.solver_report.mip_gap,4)} · 基线 ${plan.parent_plan_id||'无'}`:'';
+    const energy=plan?.energy_summary||{}, costs=plan?.cost_breakdown||{}, perf=plan?.performance||{};
+    const comparison=state.comparisons[state.kind];
+    $('#result-extra').textContent=plan?`能量：负荷 ${fmt(energy.demand_kwh)} kWh · 柴油 ${fmt(energy.diesel_kwh)} kWh · 购电 ${fmt(energy.import_kwh)} kWh · 弃可再生 ${fmt(energy.curtailed_kwh)} kWh；模型 ${perf.variables||'—'} 变量 / ${perf.constraints||'—'} 约束，建模 ${fmt(perf.build_seconds,3)} s，求解 ${fmt(perf.solve_seconds,3)} s${comparison?`；相比上一版：目标值 ${fmt(comparison.delta_right_minus_left.objective)}，柴油 ${fmt(comparison.delta_right_minus_left.total_liters)} L，耗时 ${fmt(comparison.delta_right_minus_left.elapsed_seconds)} s`:''}。` : '';
+    $('#statistics-table').innerHTML=plan?`<table><thead><tr><th>类别</th><th>指标</th><th>数值</th></tr></thead><tbody>${Object.entries(energy).map(([k,v])=>`<tr><td>能量</td><td>${esc(k)}</td><td>${fmt(v)} kWh</td></tr>`).concat(Object.entries(costs).map(([k,v])=>`<tr><td>成本</td><td>${esc(k)}</td><td>${fmt(v)}</td></tr>`)).join('')}</tbody></table>`:'<p class="notice">本模块暂无统计结果。</p>';
     const rows=plan?.dispatch||[], [a,b]=page('dispatch',rows.length,rowCount());
     $('#dispatch-table').innerHTML=`<table><thead><tr>${['时段','负荷 kW','柴油 kW','购电 kW','油耗 L','失负荷 kW'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.slice(a,b).map((r,i)=>`<tr><td>${r.step+1}</td><td>${fmt(r.demand_kw,1)}</td><td>${fmt(Object.values(r.generators).reduce((s,v)=>s+v.power_kw,0),1)}</td><td>${fmt(r.grid_import_kw,1)}</td><td>${fmt(plan.fuel_summary.interval_liters[a+i])}</td><td>${fmt(r.lost_load_kw,1)}</td></tr>`).join('')}</tbody></table>`;
   }
@@ -101,6 +131,13 @@
     const id=$('#plan-select').value;
     if(id) state.plans[kind]=await api(`/api/plans/id/${encodeURIComponent(id)}`); else state.plans[kind]=null;
     if(state.kind===kind)renderPlan();
+  }
+  async function compareCurrent() {
+    const rows=state.summaries[state.kind]||[], current=state.plans[state.kind]?.plan_id;
+    const index=rows.findIndex(row=>row.plan_id===current), previous=rows[index+1];
+    if(!current||!previous)throw new Error('当前版本没有可比较的上一版');
+    state.comparisons[state.kind]=await api(`/api/plans/${state.kind}/compare?left_id=${encodeURIComponent(previous.plan_id)}&right_id=${encodeURIComponent(current)}`);
+    renderPlan();
   }
   function renderControl() {
     const kind=state.kind, control=state.controls[kind]||{}, plan=state.plans[kind];
@@ -184,6 +221,15 @@
   function download(name,value) {
     const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
+  function downloadText(name,text,mime='text/plain') {
+    const url=URL.createObjectURL(new Blob([text],{type:mime})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  function exportCsv() {
+    const plan=state.plans[state.kind]; if(!plan?.dispatch?.length)throw new Error('本模块暂无结果');
+    const rows=[['step','timestamp','demand_kw','diesel_kw','grid_import_kw','grid_export_kw','fuel_liters','lost_load_kw']];
+    plan.dispatch.forEach((row,index)=>rows.push([row.step+1,row.timestamp||'',row.demand_kw,Object.values(row.generators||{}).reduce((sum,g)=>sum+g.power_kw,0),row.grid_import_kw,row.grid_export_kw,plan.fuel_summary.interval_liters[index]||0,row.lost_load_kw]));
+    downloadText(`${plan.plan_id}.csv`,rows.map(row=>row.map(value=>`"${String(value??'').replaceAll('"','""')}"`).join(',')).join('\r\n'),'text/csv;charset=utf-8');
+  }
   async function readFile(event) {
     const file=event.target.files?.[0]; if(!file)return null;
     if(file.size>8*1024*1024)throw new Error('JSON 文件不能超过 8 MB');
@@ -195,6 +241,7 @@
     for(const [id,key] of [['solver-select','solver'],['time-limit','time_limit_seconds'],['mip-gap','mip_gap']])bind(`#${id}`,key==='solver'?'change':'input',e=>{state.configs[state.kind][key]=key==='solver'?e.target.value:Number(e.target.value);dirty();});
     bind('#optimization-form','input',e=>{if(e.target.dataset.opt){state.configs[state.kind].optimization[e.target.dataset.opt]=Number(e.target.value);dirty();}});
     bind('#curve-kind','change',()=>{state.pages.curve=0;renderInputs();});
+    bind('#inputs','click',e=>{const button=e.target.closest('[data-curve-action]');if(button)return action(button,async()=>curveAction(button.dataset.curveAction));});
     bind('#input-curve-form','input',e=>{if(e.target.dataset.curve!=null){state.configs[state.kind].forecast[$('#curve-kind').value][Number(e.target.dataset.curve)]=Number(e.target.value);dirty();}});
     bind('#reserve-fraction','input',e=>{state.configs[state.kind].forecast.reserve_fraction=Number(e.target.value);dirty();});
     bind('#start-time','change',e=>{state.configs[state.kind].start_time=e.target.value?new Date(e.target.value).toISOString():null;dirty();});
@@ -205,7 +252,9 @@
     bind('#parent-select','change',e=>{state.parents[state.kind]=e.target.value;});
     bind('#plan-select','change',async e=>{const kind=state.kind;if(e.target.value)state.plans[kind]=await api(`/api/plans/id/${encodeURIComponent(e.target.value)}`);if(state.kind===kind)renderPlan();});
     bind('#reload-results','click',()=>loadHistory(state.kind,true));
+    bind('#compare-result','click',e=>action(e.target,compareCurrent));
     bind('#export-result','click',()=>{const plan=state.plans[state.kind];if(!plan)throw new Error('本模块暂无结果');download(`${plan.plan_id}.json`,plan);});
+    bind('#export-csv','click',exportCsv);
     bind('#result-curve','change',renderPlan);
     bind('#result-tabs','click',e=>{const b=e.target.closest('[data-result]');if(b){state.resultTab=b.dataset.result;renderPlan();}});
     bind('#control-tabs','click',async e=>{const b=e.target.closest('[data-control-tab]');if(b){state.controlTab=b.dataset.controlTab;state.pages.control=0;await loadControl();}});

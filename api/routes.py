@@ -11,6 +11,7 @@ from common.schemas import CaseData, ControlEvent, ControlState, DeviceParameter
 from common.solvers import SolverFactory, SolverUnavailable
 from common.store import ScheduleStore
 from common.validation import validate_plan
+from common.analytics import energy_summary
 from daily_plan.planner import DailyPlanner
 from hourly_plan.planner import HourlyPlanner
 from weekly_plan.planner import WeeklyPlanner
@@ -61,6 +62,9 @@ def _module_kind(kind: str) -> HorizonName:
 
 def _module_config(kind: str) -> HorizonConfig:
     name = _module_kind(kind)
+    saved = store.load_horizon_config(kind)
+    if saved is not None:
+        return saved
     case = ensure_case()
     return case.horizon_configs.get(name) or case.config_for(name)
 
@@ -278,6 +282,38 @@ def list_plans(kind: str, limit: int = 20):
     return {"plans": [plan.model_dump(mode="json") for plan in store.list_plans(kind, limit=max(1, min(limit, 100)))]}
 
 
+@router.get("/plans/{kind}/compare")
+def compare_plans(kind: str, left_id: str, right_id: str):
+    """Compare two versions without returning their large dispatch payloads."""
+    if kind not in {"weekly", "daily", "hourly"}:
+        raise HTTPException(status_code=404, detail="unknown plan kind")
+    left, right = store.get_plan(left_id), store.get_plan(right_id)
+    if left is None or right is None:
+        raise HTTPException(status_code=404, detail="plan not found")
+    if left.kind.value != kind or right.kind.value != kind:
+        raise HTTPException(status_code=409, detail="只能比较同一调度模块的计划")
+
+    def compact(plan):
+        return {
+            "plan_id": plan.plan_id,
+            "status": plan.status,
+            "created_at": plan.created_at,
+            "solver": plan.solver_report.solver,
+            "objective": plan.solver_report.objective,
+            "mip_gap": plan.solver_report.mip_gap,
+            "elapsed_seconds": plan.solver_report.elapsed_seconds,
+            "total_liters": plan.fuel_summary.total_liters,
+            "energy_summary": plan.energy_summary or energy_summary(plan.dispatch, plan.interval_minutes),
+            "cost_breakdown": plan.cost_breakdown,
+            "performance": plan.performance,
+        }
+
+    left_data, right_data = compact(left), compact(right)
+    numeric_keys = ("objective", "total_liters", "elapsed_seconds")
+    delta = {key: None if left_data[key] is None or right_data[key] is None else round(right_data[key] - left_data[key], 6) for key in numeric_keys}
+    return {"left": left_data, "right": right_data, "delta_right_minus_left": delta}
+
+
 @router.get("/plan-summaries")
 def plan_summaries(kind: str | None = None, limit: int = 50, offset: int = 0):
     if kind is not None and kind not in {"weekly", "daily", "hourly"}:
@@ -290,6 +326,8 @@ def get_plan(plan_id: str):
     plan = store.get_plan(plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail="plan not found")
+    if not plan.energy_summary and plan.dispatch:
+        plan.energy_summary = energy_summary(plan.dispatch, plan.interval_minutes)
     return plan.model_dump(mode="json")
 
 
