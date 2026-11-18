@@ -12,7 +12,7 @@
   const clone = v => structuredClone(v);
   const size = () => innerHeight < 650 ? 3 : innerWidth < 800 ? 4 : 6;
   const rowCount = () => innerHeight < 700 || innerWidth < 800 ? 3 : 5;
-  const state = {kind:'weekly', feature:'optimization', shared:null, configs:{}, dirty:{}, solvers:{}, case:null, deviceDirty:false, deviceIndex:0, networkText:'', networkChunks:[], networkDirty:false, plans:{}, summaries:{}, comparisons:{}, curveHistory:{}, audit:{}, controls:{}, validations:{}, parents:{}, pages:{opt:0,curve:0,device:0,network:0,history:0,dispatch:0,control:0}, resultTab:'chart',controlTab:'audit', busy:false};
+  const state = {kind:'weekly', feature:'optimization', shared:null, configs:{}, dirty:{}, solvers:{}, case:null, deviceDirty:false, deviceIndex:0, networkText:'', networkChunks:[], networkDirty:false, plans:{}, summaries:{}, comparisons:{}, curveHistory:{}, audit:{}, controls:{}, validations:{}, parents:{}, pages:{opt:0,curve:0,device:0,network:0,history:0,dispatch:0,stats:0,control:0}, resultTab:'chart',controlTab:'audit', busy:false};
   const toast = (text,error=false) => { $('#toast').textContent=String(text).slice(0,450); $('#toast').classList.toggle('error',error); };
   async function api(path,options={}) {
     const response = await fetch(path,{...options,headers:{'Content-Type':'application/json',...options.headers}});
@@ -113,7 +113,9 @@
     const energy=plan?.energy_summary||{}, costs=plan?.cost_breakdown||{}, perf=plan?.performance||{};
     const comparison=state.comparisons[state.kind];
     $('#result-extra').textContent=plan?`能量：负荷 ${fmt(energy.demand_kwh)} kWh · 柴油 ${fmt(energy.diesel_kwh)} kWh · 购电 ${fmt(energy.import_kwh)} kWh · 弃可再生 ${fmt(energy.curtailed_kwh)} kWh；模型 ${perf.variables||'—'} 变量 / ${perf.constraints||'—'} 约束，建模 ${fmt(perf.build_seconds,3)} s，求解 ${fmt(perf.solve_seconds,3)} s${comparison?`；相比上一版：目标值 ${fmt(comparison.delta_right_minus_left.objective)}，柴油 ${fmt(comparison.delta_right_minus_left.total_liters)} L，耗时 ${fmt(comparison.delta_right_minus_left.elapsed_seconds)} s`:''}。` : '';
-    $('#statistics-table').innerHTML=plan?`<table><thead><tr><th>类别</th><th>指标</th><th>数值</th></tr></thead><tbody>${Object.entries(energy).map(([k,v])=>`<tr><td>能量</td><td>${esc(k)}</td><td>${fmt(v)} kWh</td></tr>`).concat(Object.entries(costs).map(([k,v])=>`<tr><td>成本</td><td>${esc(k)}</td><td>${fmt(v)}</td></tr>`)).join('')}</tbody></table>`:'<p class="notice">本模块暂无统计结果。</p>';
+    const statRows=Object.entries(energy).map(([k,v])=>['能量',k,`${fmt(v)} kWh`]).concat(Object.entries(costs).map(([k,v])=>['成本',k,fmt(v)]));
+    const [sa,sb]=page('stats',statRows.length,rowCount());
+    $('#statistics-table').innerHTML=plan?`<table><thead><tr><th>类别</th><th>指标</th><th>数值</th></tr></thead><tbody>${statRows.slice(sa,sb).map(row=>`<tr>${row.map(value=>`<td>${esc(value)}</td>`).join('')}</tr>`).join('')}</tbody></table>`:'<p class="notice">本模块暂无统计结果。</p>';
     const rows=plan?.dispatch||[], [a,b]=page('dispatch',rows.length,rowCount());
     $('#dispatch-table').innerHTML=`<table><thead><tr>${['时段','负荷 kW','柴油 kW','购电 kW','油耗 L','失负荷 kW'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.slice(a,b).map((r,i)=>`<tr><td>${r.step+1}</td><td>${fmt(r.demand_kw,1)}</td><td>${fmt(Object.values(r.generators).reduce((s,v)=>s+v.power_kw,0),1)}</td><td>${fmt(r.grid_import_kw,1)}</td><td>${fmt(plan.fuel_summary.interval_liters[a+i])}</td><td>${fmt(r.lost_load_kw,1)}</td></tr>`).join('')}</tbody></table>`;
   }
@@ -268,7 +270,7 @@
     bind('#network-file','change',async e=>{const data=await readFile(e);if(!data)return;state.networkText=JSON.stringify(data,null,2);state.networkDirty=true;state.pages.network=0;renderNetwork();toast('模型已加载为共享草稿，请保存');});
     bind('#save-network','click',e=>action(e.target,async()=>{const model=await put('/api/network-model',JSON.parse(state.networkText));state.networkText=JSON.stringify(model,null,2);state.networkDirty=false;renderNetwork();toast('共享电网模型已保存');}));
     bind('#export-network','click',()=>download('shared-network.json',JSON.parse(state.networkText)));
-    bind('#app','click',async e=>{const b=e.target.closest('[data-page]');if(!b)return;const [key,delta]=b.dataset.page.split(':');state.pages[key]=Math.max(0,state.pages[key]+Number(delta));if(key==='opt')renderOptimization();if(key==='curve')renderInputs();if(key==='device')renderDevices();if(key==='network')renderNetwork();if(key==='history')await loadHistory();if(key==='dispatch')renderPlan();if(key==='control'){if(state.controlTab==='audit')await loadControl();else renderControl();}});
+    bind('#app','click',async e=>{const b=e.target.closest('[data-page]');if(!b)return;const [key,delta]=b.dataset.page.split(':');state.pages[key]=Math.max(0,state.pages[key]+Number(delta));if(key==='opt')renderOptimization();if(key==='curve')renderInputs();if(key==='device')renderDevices();if(key==='network')renderNetwork();if(key==='history')await loadHistory();if(key==='dispatch'||key==='stats')renderPlan();if(key==='control'){if(state.controlTab==='audit')await loadControl();else renderControl();}});
     window.addEventListener('beforeunload',e=>{if(Object.values(state.dirty).some(Boolean)||state.deviceDirty||state.networkDirty){e.preventDefault();e.returnValue='';}});
     let resizeTimer;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(show,150);});
   }
